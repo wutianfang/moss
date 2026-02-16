@@ -1,0 +1,11 @@
+server:
+  addr: ":1324"
+mysql:
+  dsn: "root:root@tcp(127.0.0.1:3306)/moss?charset=utf8mb4&parseTime=True&loc=Local"
+  max_open_conns: 10
+  max_idle_conns: 5
+  conn_max_lifetime_sec: 300
+storage:
+  word_mp3_dir: "store/word_mp3"
+log:
+  dir: "log"

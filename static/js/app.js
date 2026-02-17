@@ -37,13 +37,61 @@ function useAudioPlayer() {
   return playAudio;
 }
 
-function PartAndSentence({ row, playAudio }) {
+function useIsMobile(breakpoint = 960) {
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== "undefined" ? window.innerWidth <= breakpoint : false,
+  );
+
+  useEffect(() => {
+    function onResize() {
+      setIsMobile(window.innerWidth <= breakpoint);
+    }
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [breakpoint]);
+
+  return isMobile;
+}
+
+function normalizeWordText(raw) {
+  return (raw || "").trim().toLowerCase();
+}
+
+function formatMeaningLines(parts, limit = 0) {
+  const rows = (parts || []).map((part) => {
+    const means = Array.isArray(part.means) ? part.means.join("；") : "";
+    if (!part.part) {
+      return means;
+    }
+    return `${part.part} ${means}`.trim();
+  }).filter(Boolean);
+  if (limit > 0) {
+    return rows.slice(0, limit);
+  }
+  return rows;
+}
+
+function renderMeaningPreview(parts) {
+  const rows = formatMeaningLines(parts, 2).map((row) => row.split("；").slice(0, 3).join("；"));
+  if (rows.length === 0) {
+    return "-";
+  }
+  return rows.join("；");
+}
+
+function PartAndSentence({
+  row,
+  playAudio,
+  forceAllSentences = false,
+  largeTabs = false,
+  looseSentence = false,
+}) {
   const [expanded, setExpanded] = useState(false);
   const [groupIndex, setGroupIndex] = useState(0);
   const sentenceGroups = row.sentence_groups || [];
   const currentGroup = sentenceGroups[groupIndex] || sentenceGroups[0] || null;
   const sentences = currentGroup ? currentGroup.sentences || [] : [];
-  const visibleSentences = expanded ? sentences : sentences.slice(0, 3);
+  const visibleSentences = forceAllSentences ? sentences : (expanded ? sentences : sentences.slice(0, 3));
 
   useEffect(() => {
     setGroupIndex(0);
@@ -75,7 +123,7 @@ function PartAndSentence({ row, playAudio }) {
               return (
                 <button
                   key={`${label}-${idx}`}
-                  className={`group-tab ${idx === groupIndex ? "active" : ""}`}
+                  className={`group-tab ${largeTabs ? "large" : ""} ${idx === groupIndex ? "active" : ""}`}
                   onClick={() => setGroupIndex(idx)}
                 >
                   {label}
@@ -87,7 +135,7 @@ function PartAndSentence({ row, playAudio }) {
         {visibleSentences.length > 0 ? (
           <ul className="sentence-list">
             {visibleSentences.map((sentence, idx) => (
-              <li className="sentence-item" key={`${sentence.en}-${idx}`}>
+              <li className={`sentence-item ${looseSentence ? "loose" : ""}`} key={`${sentence.en}-${idx}`}>
                 <span className="sentence-en" onClick={() => playAudio(sentence.ttsUrl)}>
                   {sentence.en}
                 </span>
@@ -110,7 +158,7 @@ function PartAndSentence({ row, playAudio }) {
         ) : (
           <div>-</div>
         )}
-        {sentences.length > 3 && (
+        {!forceAllSentences && sentences.length > 3 && (
           <button className="text-btn" onClick={() => setExpanded((v) => !v)}>
             {expanded ? "收起例句" : "展开更多例句"}
           </button>
@@ -120,7 +168,7 @@ function PartAndSentence({ row, playAudio }) {
   );
 }
 
-function WordTable({ rows, playAudio, operationLabel, onOperation }) {
+function WordTable({ rows, playAudio, operationLabel, onOperation, resultResolver }) {
   const showOperation = Boolean(operationLabel && onOperation);
   return (
     <table className="word-table">
@@ -128,66 +176,77 @@ function WordTable({ rows, playAudio, operationLabel, onOperation }) {
         <tr>
           <th style={{ width: "56px" }}>序号</th>
           <th style={{ width: "160px" }}>单词</th>
+          {resultResolver && <th style={{ width: "92px" }}>结果</th>}
           <th>单词说明</th>
         </tr>
       </thead>
       <tbody>
-        {rows.map((row, idx) => (
-          <tr key={`${row.word}-${idx}`}>
-            <td>{idx + 1}</td>
-            <td>{row.word}</td>
-            <td>
-              <div className="desc-cell">
-                <div className="desc-header">
-                  <div className="small-title">发音</div>
-                  <div className="desc-right-tools">
-                    {row.mean_tag && <span className="desc-tag">{row.mean_tag}</span>}
-                    {showOperation && (
-                      <a
-                        className="desc-op-link"
-                        href="#"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          onOperation(row.word);
-                        }}
-                      >
-                        {operationLabel}
-                      </a>
-                    )}
+        {rows.map((row, idx) => {
+          const result = resultResolver ? resultResolver(row, idx) : null;
+          return (
+            <tr key={`${row.word}-${idx}`}>
+              <td>{idx + 1}</td>
+              <td>{row.word}</td>
+              {resultResolver && (
+                <td>
+                  <span className={`quiz-result-text ${result ? result.className || "" : ""}`}>
+                    {result ? result.text : "-"}
+                  </span>
+                </td>
+              )}
+              <td>
+                <div className="desc-cell">
+                  <div className="desc-header">
+                    <div className="small-title">发音</div>
+                    <div className="desc-right-tools">
+                      {row.mean_tag && <span className="desc-tag">{row.mean_tag}</span>}
+                      {showOperation && (
+                        <a
+                          className="desc-op-link"
+                          href="#"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            onOperation(row.word);
+                          }}
+                        >
+                          {operationLabel}
+                        </a>
+                      )}
+                    </div>
                   </div>
+                  <div className="yinbiao-inline">
+                    <span>英音：[{row.ph_en || "-"}]</span>
+                    <a
+                      className="play-icon-link"
+                      href="#"
+                      onMouseEnter={() => playAudio(row.en_audio)}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        playAudio(row.en_audio);
+                      }}
+                    >
+                      {"\u25B6"}
+                    </a>
+                    <span className="yinbiao-gap">美音：[{row.ph_am || "-"}]</span>
+                    <a
+                      className="play-icon-link"
+                      href="#"
+                      onMouseEnter={() => playAudio(row.am_audio || row.en_audio)}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        playAudio(row.am_audio || row.en_audio);
+                      }}
+                    >
+                      {"\u25B6"}
+                    </a>
+                  </div>
+                  <div className="section-divider" />
+                  <PartAndSentence row={row} playAudio={playAudio} />
                 </div>
-                <div className="yinbiao-inline">
-                  <span>英音：[{row.ph_en || "-"}]</span>
-                  <a
-                    className="play-icon-link"
-                    href="#"
-                    onMouseEnter={() => playAudio(row.en_audio)}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      playAudio(row.en_audio);
-                    }}
-                  >
-                    {"\u25B6"}
-                  </a>
-                  <span className="yinbiao-gap">美音：[{row.ph_am || "-"}]</span>
-                  <a
-                    className="play-icon-link"
-                    href="#"
-                    onMouseEnter={() => playAudio(row.am_audio || row.en_audio)}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      playAudio(row.am_audio || row.en_audio);
-                    }}
-                  >
-                    {"\u25B6"}
-                  </a>
-                </div>
-                <div className="section-divider" />
-                <PartAndSentence row={row} playAudio={playAudio} />
-              </div>
-            </td>
-          </tr>
-        ))}
+              </td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
@@ -231,7 +290,43 @@ function DictationPanel({ title, fetchPath, onBack, operationLabel, onOperation,
   const [words, setWords] = useState([]);
   const [index, setIndex] = useState(-1);
   const [showAnswer, setShowAnswer] = useState(false);
+  const [inputValue, setInputValue] = useState("");
+  const [resultMap, setResultMap] = useState({});
   const [error, setError] = useState("");
+
+  function wordKey(word) {
+    return normalizeWordText(word);
+  }
+
+  function resultMeta(status) {
+    if (status === "correct") {
+      return { text: "正确", className: "correct" };
+    }
+    if (status === "forgotten") {
+      return { text: "忘记", className: "forgotten" };
+    }
+    return { text: "错误", className: "wrong" };
+  }
+
+  const stats = useMemo(() => {
+    const total = words.length;
+    let correct = 0;
+    let forgotten = 0;
+    words.forEach((row) => {
+      const status = resultMap[wordKey(row.word)];
+      if (status === "correct") {
+        correct += 1;
+      } else if (status === "forgotten") {
+        forgotten += 1;
+      }
+    });
+    return {
+      total,
+      correct,
+      forgotten,
+      wrong: Math.max(total - correct - forgotten, 0),
+    };
+  }, [words, resultMap]);
 
   useEffect(() => {
     api(fetchPath)
@@ -239,13 +334,59 @@ function DictationPanel({ title, fetchPath, onBack, operationLabel, onOperation,
         setWords(data.words || []);
         setIndex(-1);
         setShowAnswer(false);
+        setInputValue("");
+        setResultMap({});
         setError("");
       })
       .catch((err) => setError(err.message));
   }, [fetchPath]);
 
+  useEffect(() => {
+    function onKeyDown(e) {
+      if (e.key !== "Meta") {
+        return;
+      }
+      if (index < 0 || index >= words.length) {
+        return;
+      }
+      const row = words[index];
+      playAudio(row.am_audio || row.en_audio);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [index, words, playAudio]);
+
+  function submitCurrentInput() {
+    if (index < 0 || index >= words.length) {
+      return;
+    }
+    const row = words[index];
+    const key = wordKey(row.word);
+    if (resultMap[key] === "forgotten") {
+      return;
+    }
+    const ok = normalizeWordText(inputValue) === normalizeWordText(row.word);
+    setResultMap((prev) => ({ ...prev, [key]: ok ? "correct" : "wrong" }));
+  }
+
   function readNext() {
+    if (showAnswer) {
+      return;
+    }
+    if (words.length === 0) {
+      setShowAnswer(true);
+      return;
+    }
+    if (index < 0) {
+      setIndex(0);
+      setInputValue("");
+      playAudio(words[0].am_audio || words[0].en_audio);
+      return;
+    }
+    submitCurrentInput();
+    setInputValue("");
     if (index + 1 >= words.length) {
+      setShowAnswer(true);
       return;
     }
     const nextIndex = index + 1;
@@ -262,12 +403,34 @@ function DictationPanel({ title, fetchPath, onBack, operationLabel, onOperation,
     playAudio(row.am_audio || row.en_audio);
   }
 
+  function operateCurrentAndSkip() {
+    if (index < 0 || index >= words.length || !onOperation) {
+      return;
+    }
+    const row = words[index];
+    onOperation(row.word)
+      .then(() => {
+        setResultMap((prev) => ({ ...prev, [wordKey(row.word)]: "forgotten" }));
+        setInputValue("");
+        if (index + 1 >= words.length) {
+          setShowAnswer(true);
+          return;
+        }
+        const nextIndex = index + 1;
+        const next = words[nextIndex];
+        setIndex(nextIndex);
+        playAudio(next.am_audio || next.en_audio);
+      })
+      .catch((err) => setError(err.message));
+  }
+
   function handleOperation(word) {
     if (!onOperation) {
       return;
     }
     onOperation(word)
       .then(() => {
+        setResultMap((prev) => ({ ...prev, [wordKey(word)]: "forgotten" }));
         if (removeOnOperationSuccess) {
           setWords((prev) => {
             const next = prev.filter((item) => item.word !== word);
@@ -282,6 +445,11 @@ function DictationPanel({ title, fetchPath, onBack, operationLabel, onOperation,
             });
             return next;
           });
+          setResultMap((prev) => {
+            const next = { ...prev };
+            delete next[wordKey(word)];
+            return next;
+          });
         }
       })
       .catch((err) => setError(err.message));
@@ -294,9 +462,23 @@ function DictationPanel({ title, fetchPath, onBack, operationLabel, onOperation,
         <div className="progress">
           当前进度：{Math.max(index + 1, 0)} / {words.length}
         </div>
+        <div className="dictation-input-row">
+          <input
+            className="input dictation-input"
+            placeholder="输入听到的单词"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                readNext();
+              }
+            }}
+          />
+        </div>
         <div className="dictation-actions">
           <button className="btn brand" onClick={readNext}>读下一单词</button>
           <button className="btn" onClick={repeatCurrent}>重复当前单词</button>
+          <button className="btn" onClick={operateCurrentAndSkip}>{operationLabel}</button>
           <button className="btn secondary" onClick={() => setShowAnswer((v) => !v)}>
             {showAnswer ? "隐藏答案" : "显示答案"}
           </button>
@@ -306,11 +488,19 @@ function DictationPanel({ title, fetchPath, onBack, operationLabel, onOperation,
       </div>
       {showAnswer && (
         <div style={{ marginTop: "14px" }}>
+          <div className="quiz-stat-line">
+            测验结果：共听写单词 {stats.total} 个，正确 {stats.correct} 个，错误 {stats.wrong} 个，忘记 {stats.forgotten} 个
+          </div>
           <WordTable
             rows={words}
             playAudio={playAudio}
             operationLabel={operationLabel}
             onOperation={handleOperation}
+            resultResolver={(row) => {
+              const key = wordKey(row.word);
+              const status = resultMap[key] || "wrong";
+              return resultMeta(status);
+            }}
           />
         </div>
       )}
@@ -322,6 +512,8 @@ function SpellingPanel({ title, fetchPath, onBack, operationLabel, onOperation, 
   const playAudio = useAudioPlayer();
   const [words, setWords] = useState([]);
   const [showAnswer, setShowAnswer] = useState(false);
+  const [inputMap, setInputMap] = useState({});
+  const inputRefs = useRef([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -329,10 +521,40 @@ function SpellingPanel({ title, fetchPath, onBack, operationLabel, onOperation, 
       .then((data) => {
         setWords(data.words || []);
         setShowAnswer(false);
+        setInputMap({});
         setError("");
       })
       .catch((err) => setError(err.message));
   }, [fetchPath]);
+
+  const stats = useMemo(() => {
+    const total = words.length;
+    let correct = 0;
+    words.forEach((row) => {
+      if (normalizeWordText(inputMap[row.word]) === normalizeWordText(row.word)) {
+        correct += 1;
+      }
+    });
+    return { total, correct, wrong: Math.max(total - correct, 0) };
+  }, [words, inputMap]);
+
+  function spellingResultMeta(row) {
+    const ok = normalizeWordText(inputMap[row.word]) === normalizeWordText(row.word);
+    return ok
+      ? { text: "正确", className: "correct" }
+      : { text: "错误", className: "wrong" };
+  }
+
+  function focusInputByIndex(nextIdx) {
+    if (nextIdx < 0 || nextIdx >= words.length) {
+      return;
+    }
+    const target = inputRefs.current[nextIdx];
+    if (target) {
+      target.focus();
+      target.select();
+    }
+  }
 
   function handleOperation(word) {
     if (!onOperation) {
@@ -342,6 +564,11 @@ function SpellingPanel({ title, fetchPath, onBack, operationLabel, onOperation, 
       .then(() => {
         if (removeOnOperationSuccess) {
           setWords((prev) => prev.filter((item) => item.word !== word));
+          setInputMap((prev) => {
+            const next = { ...prev };
+            delete next[word];
+            return next;
+          });
         }
       })
       .catch((err) => setError(err.message));
@@ -360,11 +587,19 @@ function SpellingPanel({ title, fetchPath, onBack, operationLabel, onOperation, 
         {error && <div className="error">{error}</div>}
       </div>
 
+      {showAnswer && (
+        <div className="quiz-stat-line">
+          测验结果：共默写单词 {stats.total} 个，正确 {stats.correct} 个，错误 {stats.wrong} 个
+        </div>
+      )}
+
       <table className="word-table" style={{ marginTop: "14px" }}>
         <thead>
           <tr>
             <th style={{ width: "64px" }}>编号</th>
             <th>释义</th>
+            <th style={{ width: "220px" }}>输入</th>
+            {showAnswer && <th style={{ width: "92px" }}>结果</th>}
             {showAnswer && <th style={{ width: "180px" }}>单词</th>}
             {showAnswer && <th style={{ width: "220px" }}>音标</th>}
             {showAnswer && operationLabel && <th style={{ width: "100px" }}>操作</th>}
@@ -375,6 +610,32 @@ function SpellingPanel({ title, fetchPath, onBack, operationLabel, onOperation, 
             <tr key={`${row.word}-${idx}`}>
               <td>{idx + 1}</td>
               <td><MeaningCell parts={row.parts} /></td>
+              <td>
+                <input
+                  className="input spelling-input"
+                  value={inputMap[row.word] || ""}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setInputMap((prev) => ({ ...prev, [row.word]: value }));
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      focusInputByIndex(idx + 1);
+                    }
+                  }}
+                  ref={(el) => {
+                    inputRefs.current[idx] = el;
+                  }}
+                />
+              </td>
+              {showAnswer && (
+                <td>
+                  <span className={`quiz-result-text ${spellingResultMeta(row).className}`}>
+                    {spellingResultMeta(row).text}
+                  </span>
+                </td>
+              )}
               {showAnswer && <td>{row.word}</td>}
               {showAnswer && (
                 <td>
@@ -673,6 +934,473 @@ function ForgottenPanel({ notify }) {
   );
 }
 
+function MobileWordDetailBody({ row, playAudio }) {
+  if (!row) {
+    return null;
+  }
+  return (
+    <div className="mobile-word-detail-body">
+      <div className="mobile-word-audio-row">
+        <span>英 [{row.ph_en || "-"}]</span>
+        <a
+          className="play-icon-link"
+          href="#"
+          onClick={(e) => {
+            e.preventDefault();
+            playAudio(row.en_audio || row.en_audio_url);
+          }}
+        >
+          {"\u25B6"}
+        </a>
+        <span className="yinbiao-gap">美 [{row.ph_am || "-"}]</span>
+        <a
+          className="play-icon-link"
+          href="#"
+          onClick={(e) => {
+            e.preventDefault();
+            playAudio(row.am_audio || row.am_audio_url || row.en_audio || row.en_audio_url);
+          }}
+        >
+          {"\u25B6"}
+        </a>
+      </div>
+      {row.mean_tag && <div className="mobile-word-tag">{row.mean_tag}</div>}
+      <div className="section-divider" />
+      <PartAndSentence
+        row={row}
+        playAudio={playAudio}
+        forceAllSentences
+        largeTabs
+        looseSentence
+      />
+    </div>
+  );
+}
+
+function MobileQuizPanel({
+  title,
+  type,
+  fetchPath,
+  onBack,
+  operationLabel,
+  onOperation,
+}) {
+  const playAudio = useAudioPlayer();
+  const [words, setWords] = useState([]);
+  const [index, setIndex] = useState(0);
+  const [inputValue, setInputValue] = useState("");
+  const [revealed, setRevealed] = useState(false);
+  const [result, setResult] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [finished, setFinished] = useState(false);
+  const [correctCount, setCorrectCount] = useState(0);
+  const [wrongCount, setWrongCount] = useState(0);
+  const [operationCount, setOperationCount] = useState(0);
+  const [operatedCurrent, setOperatedCurrent] = useState(false);
+  const current = words[index] || null;
+
+  useEffect(() => {
+    setLoading(true);
+    setError("");
+    api(fetchPath)
+      .then((data) => {
+        const rows = data.words || [];
+        setWords(rows);
+        setIndex(0);
+        setInputValue("");
+        setRevealed(false);
+        setResult("");
+        setFinished(rows.length === 0);
+        setCorrectCount(0);
+        setWrongCount(0);
+        setOperationCount(0);
+        setOperatedCurrent(false);
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, [fetchPath]);
+
+  useEffect(() => {
+    if (type === "dictation" && current && !revealed) {
+      playAudio(current.am_audio || current.en_audio);
+    }
+  }, [type, current && current.word, revealed]);
+
+  function goNext() {
+    if (!current) {
+      setFinished(true);
+      return;
+    }
+    if (index + 1 >= words.length) {
+      setFinished(true);
+      return;
+    }
+    setIndex((prev) => prev + 1);
+    setInputValue("");
+    setRevealed(false);
+    setResult("");
+    setOperatedCurrent(false);
+  }
+
+  function submitOrNext() {
+    if (!current) {
+      return;
+    }
+    if (revealed) {
+      goNext();
+      return;
+    }
+    const ok = normalizeWordText(inputValue) === normalizeWordText(current.word);
+    if (ok) {
+      setCorrectCount((prev) => prev + 1);
+    } else {
+      setWrongCount((prev) => prev + 1);
+    }
+    setResult(ok ? "correct" : "wrong");
+    setRevealed(true);
+    if (type === "spelling") {
+      playAudio(current.am_audio || current.en_audio);
+    }
+  }
+
+  function handleOperation() {
+    if (!current || !onOperation) {
+      return;
+    }
+    onOperation(current.word)
+      .then(() => {
+        if (!operatedCurrent) {
+          setOperationCount((prev) => prev + 1);
+          setOperatedCurrent(true);
+        }
+        setRevealed(true);
+      })
+      .catch((err) => setError(err.message));
+  }
+
+  if (loading) {
+    return (
+      <div className="mobile-page-card">
+        <div className="mobile-topbar">
+          <button className="mobile-back-btn" onClick={onBack}>{"< 退出"}</button>
+          <h2 className="mobile-page-title">{title}</h2>
+          <div />
+        </div>
+        <div className="helper-tip">正在加载...</div>
+      </div>
+    );
+  }
+
+  if (finished || !current) {
+    return (
+      <div className="mobile-page-card">
+        <div className="mobile-topbar">
+          <button className="mobile-back-btn" onClick={onBack}>{"< 退出"}</button>
+          <h2 className="mobile-page-title">{title}</h2>
+          <div />
+        </div>
+        <div className="mobile-quiz-finished">本轮已完成</div>
+        <div className="mobile-quiz-finished-stats">对 {correctCount} 个，错 {wrongCount} 个</div>
+        <div className="mobile-quiz-finished-stats">
+          {operationLabel} {operationCount} 个
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mobile-page-card mobile-quiz-page">
+      <div className="mobile-topbar">
+        <button className="mobile-back-btn" onClick={onBack}>{"< 退出"}</button>
+        <h2 className="mobile-page-title">{title}</h2>
+        <div />
+      </div>
+
+      <div className="mobile-quiz-content">
+        <div className="mobile-quiz-progress">{index + 1}/{words.length}</div>
+
+        {type === "spelling" && (
+          <div className="mobile-quiz-meaning">{renderMeaningPreview(current.parts)}</div>
+        )}
+
+        <div className="mobile-quiz-input-row">
+          <input
+            className="input mobile-quiz-input"
+            placeholder="输入单词"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                submitOrNext();
+              }
+            }}
+          />
+          {type === "dictation" && (
+            <button
+              className="btn secondary mobile-replay-btn"
+              onClick={() => playAudio(current.am_audio || current.en_audio)}
+            >
+              重播
+            </button>
+          )}
+        </div>
+
+        <div className="mobile-quiz-actions">
+          <button className="btn secondary" onClick={submitOrNext}>
+            {revealed ? "下一个" : "确认"}
+          </button>
+          <button className="btn secondary" onClick={handleOperation}>
+            {operationLabel}
+          </button>
+        </div>
+
+        {error && <div className="error">{error}</div>}
+
+        {revealed && (
+          <div className="mobile-quiz-result-wrap">
+            {result === "correct" && <div className="mobile-quiz-result ok">正确</div>}
+            {result === "wrong" && <div className="mobile-quiz-result bad">错误</div>}
+            <div className="mobile-quiz-word-detail">
+              <div className="mobile-quiz-word-name">{current.word}</div>
+              <MobileWordDetailBody row={current} playAudio={playAudio} />
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MobileReciteRoot({ units, notify, onRootHomeChange }) {
+  const playAudio = useAudioPlayer();
+  const [view, setView] = useState("home");
+  const [context, setContext] = useState({ kind: "unit", unitId: 0, name: "" });
+  const [words, setWords] = useState([]);
+  const [selectedWord, setSelectedWord] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (onRootHomeChange) {
+      onRootHomeChange(view === "home");
+    }
+  }, [view, onRootHomeChange]);
+
+  function loadUnitWords(kind, unitId) {
+    const path = kind === "forgotten"
+      ? "/api/recite/forgotten/words"
+      : `/api/recite/units/${unitId}/words`;
+    setLoading(true);
+    setError("");
+    return api(path)
+      .then((data) => setWords(data.words || []))
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }
+
+  function openUnit(unit) {
+    setContext({ kind: "unit", unitId: unit.id, name: unit.name });
+    setSelectedWord(null);
+    setView("unit");
+    loadUnitWords("unit", unit.id);
+  }
+
+  function openForgotten() {
+    setContext({ kind: "forgotten", unitId: 0, name: "遗忘单词" });
+    setSelectedWord(null);
+    setView("unit");
+    loadUnitWords("forgotten", 0);
+  }
+
+  function forgetWord(word) {
+    return api("/api/recite/forgotten/words", {
+      method: "POST",
+      body: { word },
+    }).then(() => {
+      if (notify) {
+        notify("已添加到遗忘单词本");
+      }
+    });
+  }
+
+  function rememberWord(word) {
+    return api("/api/recite/forgotten/words/remember", {
+      method: "POST",
+      body: { word },
+    }).then(() => {
+      setWords((prev) => prev.filter((row) => row.word !== word));
+      if (notify) {
+        notify("已标记为记住");
+      }
+    });
+  }
+
+  const opLabel = context.kind === "forgotten" ? "记住" : "忘记";
+  const opAction = context.kind === "forgotten" ? rememberWord : forgetWord;
+
+  if (view === "quiz_dictation") {
+    const fetchPath = context.kind === "forgotten"
+      ? "/api/recite/forgotten/dictation"
+      : `/api/recite/units/${context.unitId}/dictation`;
+    return (
+      <MobileQuizPanel
+        title={`${context.name} 听写`}
+        type="dictation"
+        fetchPath={fetchPath}
+        operationLabel={opLabel}
+        onOperation={opAction}
+        onBack={() => {
+          setView("unit");
+          loadUnitWords(context.kind, context.unitId);
+        }}
+      />
+    );
+  }
+
+  if (view === "quiz_spelling") {
+    const fetchPath = context.kind === "forgotten"
+      ? "/api/recite/forgotten/dictation"
+      : `/api/recite/units/${context.unitId}/dictation`;
+    return (
+      <MobileQuizPanel
+        title={`${context.name} 默写`}
+        type="spelling"
+        fetchPath={fetchPath}
+        operationLabel={opLabel}
+        onOperation={opAction}
+        onBack={() => {
+          setView("unit");
+          loadUnitWords(context.kind, context.unitId);
+        }}
+      />
+    );
+  }
+
+  if (view === "word" && selectedWord) {
+    return (
+      <div className="mobile-page-card">
+        <div className="mobile-topbar">
+          <button className="mobile-back-btn" onClick={() => setView("unit")}>{"< 退出"}</button>
+          <div />
+          <a
+            className="desc-op-link"
+            href="#"
+            onClick={(e) => {
+              e.preventDefault();
+              opAction(selectedWord.word).catch((err) => setError(err.message));
+            }}
+          >
+            {opLabel}
+          </a>
+        </div>
+        <h2 className="mobile-page-title mobile-word-page-title">{selectedWord.word}</h2>
+        <MobileWordDetailBody row={selectedWord} playAudio={playAudio} />
+      </div>
+    );
+  }
+
+  if (view === "unit") {
+    return (
+      <>
+        <div className="mobile-page-card mobile-unit-page">
+          <div className="mobile-topbar mobile-unit-topbar">
+            <button className="mobile-back-btn" onClick={() => setView("home")}>{"< 退出"}</button>
+            <h2 className="mobile-page-title">{context.name}</h2>
+            <div className="mobile-topbar-placeholder" />
+          </div>
+
+          {error && <div className="error">{error}</div>}
+          <div className="mobile-unit-scroll">
+            {loading && <div className="helper-tip">加载中...</div>}
+            {!loading && words.length === 0 && <div className="helper-tip">暂无单词</div>}
+            {words.map((row, idx) => {
+              const meaningRows = formatMeaningLines(row.parts);
+              return (
+                <div key={`${row.word}-${idx}`} className="mobile-word-item">
+                  <button
+                    className="mobile-word-open-btn"
+                    onClick={() => {
+                      setSelectedWord(row);
+                      setView("word");
+                    }}
+                  >
+                    {row.word}
+                  </button>
+                  <div className="mobile-word-item-pron">
+                    <a
+                      className="mobile-pron-link"
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        playAudio(row.en_audio);
+                      }}
+                    >
+                      英 [{row.ph_en || "-"}]
+                    </a>
+                    <a
+                      className="mobile-pron-link"
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        playAudio(row.am_audio || row.en_audio);
+                      }}
+                    >
+                      美 [{row.ph_am || "-"}]
+                    </a>
+                  </div>
+                  <div className="mobile-word-item-mean">
+                    {meaningRows.length > 0 ? meaningRows.map((line, lineIdx) => (
+                      <div key={`${row.word}-mean-${lineIdx}`} className="mobile-word-item-mean-line">{line}</div>
+                    )) : "-"}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <nav className="mobile-bottom-nav mobile-unit-nav">
+          <button className="mobile-bottom-btn" onClick={() => setView("quiz_dictation")}>听写</button>
+          <button className="mobile-bottom-btn" onClick={() => setView("quiz_spelling")}>默写</button>
+        </nav>
+      </>
+    );
+  }
+
+  return (
+    <div className="mobile-page-card">
+      <h2 className="mobile-page-title">背单词首页</h2>
+      <ul className="mobile-home-list">
+        <li>
+          <button className="mobile-home-item" onClick={openForgotten}>遗忘单词</button>
+        </li>
+        {units.map((unit) => (
+          <li key={unit.id}>
+            <button className="mobile-home-item" onClick={() => openUnit(unit)}>{unit.name}</button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function MobileTodoPanel() {
+  const [text, setText] = useState("正在加载...");
+
+  useEffect(() => {
+    api("/api/todo/placeholder")
+      .then((data) => setText(data.message || "todo list 功能待开发"))
+      .catch((err) => setText(err.message));
+  }, []);
+
+  return (
+    <div className="mobile-page-card">
+      <h2 className="mobile-page-title">Todo List</h2>
+      <p>{text}</p>
+    </div>
+  );
+}
+
 function SidebarRecite({
   units,
   selectedType,
@@ -820,6 +1548,7 @@ function SidebarTodo() {
 }
 
 function App() {
+  const isMobile = useIsMobile(960);
   const [mode, setMode] = useState("recite");
   const [units, setUnits] = useState([]);
   const [selectedReciteType, setSelectedReciteType] = useState("unit");
@@ -828,6 +1557,7 @@ function App() {
   const [createName, setCreateName] = useState("");
   const [globalError, setGlobalError] = useState("");
   const [toast, setToast] = useState({ visible: false, text: "", ts: 0 });
+  const [showMobileRootNav, setShowMobileRootNav] = useState(true);
 
   function notify(text) {
     setToast({ visible: true, text, ts: Date.now() });
@@ -916,6 +1646,44 @@ function App() {
     }).then(() => {
       setUnits((prev) => prev.map((u) => (u.id === unitId ? { ...u, name: nextName } : u)));
     });
+  }
+
+  if (isMobile) {
+    const shouldShowBottomNav = mode === "todo" || (mode === "recite" && showMobileRootNav);
+    return (
+      <div className="mobile-shell">
+        <main className="mobile-main">
+          {globalError && <div className="error global-error">{globalError}</div>}
+          {mode === "recite" && (
+            <MobileReciteRoot
+              units={units}
+              notify={notify}
+              onRootHomeChange={setShowMobileRootNav}
+            />
+          )}
+          {mode === "todo" && <MobileTodoPanel />}
+        </main>
+
+        {shouldShowBottomNav && (
+          <nav className="mobile-bottom-nav">
+            <button
+              className={`mobile-bottom-btn ${mode === "recite" ? "active" : ""}`}
+              onClick={() => setMode("recite")}
+            >
+              背单词
+            </button>
+            <button
+              className={`mobile-bottom-btn ${mode === "todo" ? "active" : ""}`}
+              onClick={() => setMode("todo")}
+            >
+              todo
+            </button>
+          </nav>
+        )}
+
+        <div className={`toast-tip ${toast.visible ? "show" : ""}`}>{toast.text}</div>
+      </div>
+    );
   }
 
   return (

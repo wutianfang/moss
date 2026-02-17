@@ -986,6 +986,7 @@ function MobileQuizPanel({
   onOperation,
 }) {
   const playAudio = useAudioPlayer();
+  const inputRef = useRef(null);
   const [words, setWords] = useState([]);
   const [index, setIndex] = useState(0);
   const [inputValue, setInputValue] = useState("");
@@ -1026,6 +1027,15 @@ function MobileQuizPanel({
       playAudio(current.am_audio || current.en_audio);
     }
   }, [type, current && current.word, revealed]);
+
+  useEffect(() => {
+    if (loading || finished || !current || revealed) {
+      return;
+    }
+    if (inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [loading, finished, revealed, index, current && current.word]);
 
   function goNext() {
     if (!current) {
@@ -1126,6 +1136,7 @@ function MobileQuizPanel({
 
         <div className="mobile-quiz-input-row">
           <input
+            ref={inputRef}
             className="input mobile-quiz-input"
             placeholder="输入单词"
             value={inputValue}

@@ -31,3 +31,4 @@ go.work.sum
 moss
 log/
 store/
+conf/config.yaml

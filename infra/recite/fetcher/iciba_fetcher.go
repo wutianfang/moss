@@ -20,6 +20,7 @@ import (
 
 type WordFetcher interface {
 	FetchAndStore(ctx context.Context, word string) (*entity.Word, error)
+	EnsureAudioFiles(ctx context.Context, word string) error
 }
 
 type IcibaFetcher struct {
@@ -66,6 +67,40 @@ func (f *IcibaFetcher) FetchAndStore(ctx context.Context, rawWord string) (*enti
 		Parts:          parsed.Parts,
 		SentenceGroups: parsed.SentenceGroups,
 	}, nil
+}
+
+func (f *IcibaFetcher) EnsureAudioFiles(ctx context.Context, rawWord string) error {
+	word := strings.ToLower(strings.TrimSpace(rawWord))
+	if word == "" {
+		return errors.New("empty word")
+	}
+
+	enPath, amPath := f.audioLocalPaths(word)
+	enReady := fileExists(enPath)
+	amReady := fileExists(amPath)
+	if enReady && amReady {
+		return nil
+	}
+
+	parsed, err := f.fetchFromIciba(ctx, word)
+	if err != nil {
+		return err
+	}
+	if !enReady && parsed.PhEnMP3 != "" {
+		if err := downloadToFile(ctx, f.client, parsed.PhEnMP3, enPath); err != nil {
+			// keep best-effort behavior, retry path can still recover the other file.
+		}
+	}
+	if !amReady && parsed.PhAmMP3 != "" {
+		if err := downloadToFile(ctx, f.client, parsed.PhAmMP3, amPath); err != nil {
+			// keep best-effort behavior, retry path can still recover the other file.
+		}
+	}
+
+	if fileExists(enPath) && fileExists(amPath) {
+		return nil
+	}
+	return errors.New("audio file still missing")
 }
 
 type icibaResult struct {
@@ -186,6 +221,24 @@ func buildPrefix(word string) string {
 		return word
 	}
 	return string(runes[:2])
+}
+
+func (f *IcibaFetcher) audioLocalPaths(word string) (string, string) {
+	prefix := buildPrefix(word)
+	enLocal := filepath.Join(f.wordMP3Dir, "en", prefix, word+".mp3")
+	amLocal := filepath.Join(f.wordMP3Dir, "am", prefix, word+".mp3")
+	return enLocal, amLocal
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if info.IsDir() {
+		return false
+	}
+	return info.Size() > 0
 }
 
 func downloadToFile(ctx context.Context, client *http.Client, source, target string) error {

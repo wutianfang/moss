@@ -104,6 +104,7 @@ func (s *Service) QueryWord(ctx context.Context, rawWord string) (*WordInfo, err
 		return nil, err
 	}
 	if cached != nil {
+		_ = s.wordFetcher.EnsureAudioFiles(ctx, cached.Word)
 		result := buildWordInfo(cached)
 		return &result, nil
 	}
@@ -115,11 +116,13 @@ func (s *Service) QueryWord(ctx context.Context, rawWord string) (*WordInfo, err
 	if err := s.wordRepo.Create(ctx, fetched); err != nil {
 		cached, qErr := s.wordRepo.GetByWord(ctx, word)
 		if qErr == nil && cached != nil {
+			_ = s.wordFetcher.EnsureAudioFiles(ctx, cached.Word)
 			result := buildWordInfo(cached)
 			return &result, nil
 		}
 		return nil, err
 	}
+	_ = s.wordFetcher.EnsureAudioFiles(ctx, fetched.Word)
 	result := buildWordInfo(fetched)
 	return &result, nil
 }

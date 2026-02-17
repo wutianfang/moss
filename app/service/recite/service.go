@@ -17,23 +17,26 @@ const datetimeLayout = "2006-01-02 15:04:05"
 var validWord = regexp.MustCompile(`^[a-z][a-z'-]*$`)
 
 type Service struct {
-	wordRepo     *repository.WordRepository
-	unitRepo     *repository.UnitRepository
-	unitWordRepo *repository.UnitWordRepository
-	wordFetcher  fetcher.WordFetcher
+	wordRepo      *repository.WordRepository
+	unitRepo      *repository.UnitRepository
+	unitWordRepo  *repository.UnitWordRepository
+	forgottenRepo *repository.ForgottenWordRepository
+	wordFetcher   fetcher.WordFetcher
 }
 
 func NewService(
 	wordRepo *repository.WordRepository,
 	unitRepo *repository.UnitRepository,
 	unitWordRepo *repository.UnitWordRepository,
+	forgottenRepo *repository.ForgottenWordRepository,
 	wordFetcher fetcher.WordFetcher,
 ) *Service {
 	return &Service{
-		wordRepo:     wordRepo,
-		unitRepo:     unitRepo,
-		unitWordRepo: unitWordRepo,
-		wordFetcher:  wordFetcher,
+		wordRepo:      wordRepo,
+		unitRepo:      unitRepo,
+		unitWordRepo:  unitWordRepo,
+		forgottenRepo: forgottenRepo,
+		wordFetcher:   wordFetcher,
 	}
 }
 
@@ -196,6 +199,79 @@ func (s *Service) GetDictationWords(ctx context.Context, unitID int64) ([]UnitWo
 	})
 	for i := range ret {
 		ret[i].Seq = i + 1
+	}
+	return ret, nil
+}
+
+func (s *Service) AddForgottenWord(ctx context.Context, rawWord string) error {
+	word, err := normalizeWord(rawWord)
+	if err != nil {
+		return err
+	}
+	if _, err := s.QueryWord(ctx, word); err != nil {
+		return err
+	}
+	return s.forgottenRepo.Add(ctx, word)
+}
+
+func (s *Service) ListForgottenWords(ctx context.Context) ([]UnitWordItem, error) {
+	words, err := s.forgottenRepo.ListUnrememberedDistinct(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.listWordsByText(ctx, words)
+}
+
+func (s *Service) RememberForgottenWord(ctx context.Context, rawWord string) error {
+	word, err := normalizeWord(rawWord)
+	if err != nil {
+		return err
+	}
+	return s.forgottenRepo.MarkRememberedByWord(ctx, word)
+}
+
+func (s *Service) GetForgottenDictationWords(ctx context.Context) ([]UnitWordItem, error) {
+	words, err := s.ListForgottenWords(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(words) <= 1 {
+		return words, nil
+	}
+
+	ret := make([]UnitWordItem, len(words))
+	copy(ret, words)
+	rand.New(rand.NewSource(time.Now().UnixNano())).Shuffle(len(ret), func(i, j int) {
+		ret[i], ret[j] = ret[j], ret[i]
+	})
+	for i := range ret {
+		ret[i].Seq = i + 1
+	}
+	return ret, nil
+}
+
+func normalizeWord(rawWord string) (string, error) {
+	word := strings.ToLower(strings.TrimSpace(rawWord))
+	if word == "" {
+		return "", NewBizError(1001, "单词不能为空")
+	}
+	if !validWord.MatchString(word) {
+		return "", NewBizError(1001, "单词格式非法，仅支持英文字母/单引号/短横线")
+	}
+	return word, nil
+}
+
+func (s *Service) listWordsByText(ctx context.Context, words []string) ([]UnitWordItem, error) {
+	ret := make([]UnitWordItem, 0, len(words))
+	for _, wordText := range words {
+		row, err := s.wordRepo.GetByWord(ctx, wordText)
+		if err != nil {
+			return nil, err
+		}
+		if row == nil {
+			continue
+		}
+		ret = append(ret, buildUnitWordItem(row, len(ret)+1))
 	}
 	return ret, nil
 }

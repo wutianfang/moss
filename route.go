@@ -17,8 +17,9 @@ func registerRoutes(e *echo.Echo, cfg *conf.Config, db *sql.DB) {
 	wordRepo := repository.NewWordRepository(db)
 	unitRepo := repository.NewUnitRepository(db)
 	unitWordRepo := repository.NewUnitWordRepository(db)
+	forgottenRepo := repository.NewForgottenWordRepository(db)
 	wordFetcher := fetcher.NewIcibaFetcher(cfg.Storage.WordMP3Dir)
-	reciteService := recite.NewService(wordRepo, unitRepo, unitWordRepo, wordFetcher)
+	reciteService := recite.NewService(wordRepo, unitRepo, unitWordRepo, forgottenRepo, wordFetcher)
 
 	e.Static("/static", "static")
 	e.Static("/word_mp3", cfg.Storage.WordMP3Dir)
@@ -37,4 +38,8 @@ func registerRoutes(e *echo.Echo, cfg *conf.Config, db *sql.DB) {
 	reciteGroup.POST("/units/:unitId/words", recitehandler.AddUnitWord(reciteService))
 	reciteGroup.GET("/units/:unitId/words", recitehandler.ListUnitWords(reciteService))
 	reciteGroup.GET("/units/:unitId/dictation", recitehandler.GetDictation(reciteService))
+	reciteGroup.POST("/forgotten/words", recitehandler.AddForgottenWord(reciteService))
+	reciteGroup.GET("/forgotten/words", recitehandler.ListForgottenWords(reciteService))
+	reciteGroup.POST("/forgotten/words/remember", recitehandler.RememberForgottenWord(reciteService))
+	reciteGroup.GET("/forgotten/dictation", recitehandler.GetForgottenDictation(reciteService))
 }

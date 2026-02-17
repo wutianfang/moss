@@ -42,9 +42,8 @@ function PartAndSentence({ row, playAudio }) {
   const [groupIndex, setGroupIndex] = useState(0);
   const sentenceGroups = row.sentence_groups || [];
   const currentGroup = sentenceGroups[groupIndex] || sentenceGroups[0] || null;
-  const sentences = currentGroup ? (currentGroup.sentences || []) : [];
+  const sentences = currentGroup ? currentGroup.sentences || [] : [];
   const visibleSentences = expanded ? sentences : sentences.slice(0, 3);
-  const meanTag = (row.mean_tag || "").trim();
 
   useEffect(() => {
     setGroupIndex(0);
@@ -54,22 +53,15 @@ function PartAndSentence({ row, playAudio }) {
   return (
     <div className="explain-box">
       <div>
-        <div className="small-title">标签</div>
-        <div className="mean-tag-text">{meanTag || "-"}</div>
-      </div>
-
-      <div className="section-divider" />
-
-      <div>
         <div className="small-title">释义</div>
-        <ol className="part-list">
+        <ul className="part-list">
           {(row.parts || []).map((part, idx) => (
             <li key={`${part.part}-${idx}`}>
               <strong>{part.part}</strong> {part.means.join("; ")}
             </li>
           ))}
           {(row.parts || []).length === 0 && <li>-</li>}
-        </ol>
+        </ul>
       </div>
 
       <div className="section-divider" />
@@ -93,32 +85,28 @@ function PartAndSentence({ row, playAudio }) {
           </div>
         )}
         {visibleSentences.length > 0 ? (
-          <ol className="sentence-list">
+          <ul className="sentence-list">
             {visibleSentences.map((sentence, idx) => (
               <li className="sentence-item" key={`${sentence.en}-${idx}`}>
-                <span
-                  className="sentence-en"
-                  onClick={() => playAudio(sentence.ttsUrl)}
-                >
+                <span className="sentence-en" onClick={() => playAudio(sentence.ttsUrl)}>
                   {sentence.en}
                 </span>
                 {sentence.ttsUrl && (
                   <a
-                    className="sound-link"
+                    className="play-icon-link"
                     href="#"
                     onClick={(e) => {
                       e.preventDefault();
                       playAudio(sentence.ttsUrl);
                     }}
                   >
-                    播放
+                    {"\u25B6"}
                   </a>
                 )}
                 <div className="sentence-cn">{sentence.cn}</div>
-                {sentence.from && <div className="sentence-from">{sentence.from}</div>}
               </li>
             ))}
-          </ol>
+          </ul>
         ) : (
           <div>-</div>
         )}
@@ -132,14 +120,14 @@ function PartAndSentence({ row, playAudio }) {
   );
 }
 
-function WordTable({ rows, playAudio }) {
+function WordTable({ rows, playAudio, operationLabel, onOperation }) {
+  const showOperation = Boolean(operationLabel && onOperation);
   return (
     <table className="word-table">
       <thead>
         <tr>
           <th style={{ width: "56px" }}>序号</th>
           <th style={{ width: "160px" }}>单词</th>
-          <th style={{ width: "260px" }}>音标</th>
           <th>单词说明</th>
         </tr>
       </thead>
@@ -149,38 +137,75 @@ function WordTable({ rows, playAudio }) {
             <td>{idx + 1}</td>
             <td>{row.word}</td>
             <td>
-              <div className="yinbiao-row">
-                英音：
-                <a
-                  href="#"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    playAudio(row.en_audio);
-                  }}
-                >
-                  {row.ph_en || "-"}
-                </a>
+              <div className="desc-cell">
+                <div className="desc-header">
+                  <div className="small-title">发音</div>
+                  <div className="desc-right-tools">
+                    {row.mean_tag && <span className="desc-tag">{row.mean_tag}</span>}
+                    {showOperation && (
+                      <a
+                        className="desc-op-link"
+                        href="#"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          onOperation(row.word);
+                        }}
+                      >
+                        {operationLabel}
+                      </a>
+                    )}
+                  </div>
+                </div>
+                <div className="yinbiao-inline">
+                  <span>英音：[{row.ph_en || "-"}]</span>
+                  <a
+                    className="play-icon-link"
+                    href="#"
+                    onMouseEnter={() => playAudio(row.en_audio)}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      playAudio(row.en_audio);
+                    }}
+                  >
+                    {"\u25B6"}
+                  </a>
+                  <span className="yinbiao-gap">美音：[{row.ph_am || "-"}]</span>
+                  <a
+                    className="play-icon-link"
+                    href="#"
+                    onMouseEnter={() => playAudio(row.am_audio || row.en_audio)}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      playAudio(row.am_audio || row.en_audio);
+                    }}
+                  >
+                    {"\u25B6"}
+                  </a>
+                </div>
+                <div className="section-divider" />
+                <PartAndSentence row={row} playAudio={playAudio} />
               </div>
-              <div className="yinbiao-row">
-                美音：
-                <a
-                  href="#"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    playAudio(row.am_audio || row.en_audio);
-                  }}
-                >
-                  {row.ph_am || "-"}
-                </a>
-              </div>
-            </td>
-            <td>
-              <PartAndSentence row={row} playAudio={playAudio} />
             </td>
           </tr>
         ))}
       </tbody>
     </table>
+  );
+}
+
+function MeaningCell({ parts }) {
+  const safeParts = parts || [];
+  if (safeParts.length === 0) {
+    return <div>-</div>;
+  }
+  return (
+    <ul className="part-list">
+      {safeParts.map((part, idx) => (
+        <li key={`${part.part || "part"}-${idx}`}>
+          <strong>{part.part}</strong> {Array.isArray(part.means) ? part.means.join("; ") : ""}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -201,7 +226,7 @@ function TodoPanel() {
   );
 }
 
-function DictationPanel({ unitId, onBack }) {
+function DictationPanel({ title, fetchPath, onBack, operationLabel, onOperation, removeOnOperationSuccess }) {
   const playAudio = useAudioPlayer();
   const [words, setWords] = useState([]);
   const [index, setIndex] = useState(-1);
@@ -209,14 +234,15 @@ function DictationPanel({ unitId, onBack }) {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api(`/api/recite/units/${unitId}/dictation`)
+    api(fetchPath)
       .then((data) => {
         setWords(data.words || []);
         setIndex(-1);
         setShowAnswer(false);
+        setError("");
       })
       .catch((err) => setError(err.message));
-  }, [unitId]);
+  }, [fetchPath]);
 
   function readNext() {
     if (index + 1 >= words.length) {
@@ -236,9 +262,34 @@ function DictationPanel({ unitId, onBack }) {
     playAudio(row.am_audio || row.en_audio);
   }
 
+  function handleOperation(word) {
+    if (!onOperation) {
+      return;
+    }
+    onOperation(word)
+      .then(() => {
+        if (removeOnOperationSuccess) {
+          setWords((prev) => {
+            const next = prev.filter((item) => item.word !== word);
+            setIndex((old) => {
+              if (next.length === 0) {
+                return -1;
+              }
+              if (old < 0) {
+                return -1;
+              }
+              return Math.min(old, next.length - 1);
+            });
+            return next;
+          });
+        }
+      })
+      .catch((err) => setError(err.message));
+  }
+
   return (
     <div className="right-panel-inner">
-      <h2>听写单词</h2>
+      <h2>{title}</h2>
       <div className="dictation-box">
         <div className="progress">
           当前进度：{Math.max(index + 1, 0)} / {words.length}
@@ -249,20 +300,130 @@ function DictationPanel({ unitId, onBack }) {
           <button className="btn secondary" onClick={() => setShowAnswer((v) => !v)}>
             {showAnswer ? "隐藏答案" : "显示答案"}
           </button>
-          <button className="btn secondary" onClick={onBack}>返回单元内容</button>
+          <button className="btn secondary" onClick={onBack}>返回列表</button>
         </div>
         {error && <div className="error">{error}</div>}
       </div>
       {showAnswer && (
         <div style={{ marginTop: "14px" }}>
-          <WordTable rows={words} playAudio={playAudio} />
+          <WordTable
+            rows={words}
+            playAudio={playAudio}
+            operationLabel={operationLabel}
+            onOperation={handleOperation}
+          />
         </div>
       )}
     </div>
   );
 }
 
-function ReciteUnitPanel({ unit }) {
+function SpellingPanel({ title, fetchPath, onBack, operationLabel, onOperation, removeOnOperationSuccess }) {
+  const playAudio = useAudioPlayer();
+  const [words, setWords] = useState([]);
+  const [showAnswer, setShowAnswer] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api(fetchPath)
+      .then((data) => {
+        setWords(data.words || []);
+        setShowAnswer(false);
+        setError("");
+      })
+      .catch((err) => setError(err.message));
+  }, [fetchPath]);
+
+  function handleOperation(word) {
+    if (!onOperation) {
+      return;
+    }
+    onOperation(word)
+      .then(() => {
+        if (removeOnOperationSuccess) {
+          setWords((prev) => prev.filter((item) => item.word !== word));
+        }
+      })
+      .catch((err) => setError(err.message));
+  }
+
+  return (
+    <div className="right-panel-inner">
+      <h2>{title}</h2>
+      <div className="dictation-box">
+        <div className="dictation-actions">
+          <button className="btn brand" onClick={() => setShowAnswer((v) => !v)}>
+            {showAnswer ? "隐藏答案" : "查看答案"}
+          </button>
+          <button className="btn secondary" onClick={onBack}>返回列表</button>
+        </div>
+        {error && <div className="error">{error}</div>}
+      </div>
+
+      <table className="word-table" style={{ marginTop: "14px" }}>
+        <thead>
+          <tr>
+            <th style={{ width: "64px" }}>编号</th>
+            <th>释义</th>
+            {showAnswer && <th style={{ width: "180px" }}>单词</th>}
+            {showAnswer && <th style={{ width: "220px" }}>音标</th>}
+            {showAnswer && operationLabel && <th style={{ width: "100px" }}>操作</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {words.map((row, idx) => (
+            <tr key={`${row.word}-${idx}`}>
+              <td>{idx + 1}</td>
+              <td><MeaningCell parts={row.parts} /></td>
+              {showAnswer && <td>{row.word}</td>}
+              {showAnswer && (
+                <td>
+                  <div className="yinbiao-row">
+                    <span>英音：[{row.ph_en || "-"}]</span>
+                    <a
+                      className="play-icon-link"
+                      href="#"
+                      onMouseEnter={() => playAudio(row.en_audio)}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        playAudio(row.en_audio);
+                      }}
+                    >
+                      {"\u25B6"}
+                    </a>
+                  </div>
+                  <div className="yinbiao-row">
+                    <span>美音：[{row.ph_am || "-"}]</span>
+                    <a
+                      className="play-icon-link"
+                      href="#"
+                      onMouseEnter={() => playAudio(row.am_audio || row.en_audio)}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        playAudio(row.am_audio || row.en_audio);
+                      }}
+                    >
+                      {"\u25B6"}
+                    </a>
+                  </div>
+                </td>
+              )}
+              {showAnswer && operationLabel && (
+                <td>
+                  <button className="btn" onClick={() => handleOperation(row.word)}>
+                    {operationLabel}
+                  </button>
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ReciteUnitPanel({ unit, notify }) {
   const playAudio = useAudioPlayer();
   const [view, setView] = useState("detail");
   const [wordInput, setWordInput] = useState("");
@@ -271,16 +432,15 @@ function ReciteUnitPanel({ unit }) {
   const [error, setError] = useState("");
 
   function loadWords() {
-    api(`/api/recite/units/${unit.id}/words`)
-      .then((data) => setWordRows(data.words || []))
-      .catch((err) => setError(err.message));
+    return api(`/api/recite/units/${unit.id}/words`)
+      .then((data) => setWordRows(data.words || []));
   }
 
   useEffect(() => {
     setView("detail");
     setQueryWord(null);
     setError("");
-    loadWords();
+    loadWords().catch((err) => setError(err.message));
   }, [unit.id]);
 
   function doQueryWord() {
@@ -305,8 +465,40 @@ function ReciteUnitPanel({ unit }) {
       .catch((err) => setError(err.message));
   }
 
+  function forgetWord(word) {
+    return api("/api/recite/forgotten/words", {
+      method: "POST",
+      body: { word },
+    }).then(() => {
+      if (notify) {
+        notify("已添加到遗忘单词本");
+      }
+    });
+  }
+
   if (view === "dictation") {
-    return <DictationPanel unitId={unit.id} onBack={() => setView("detail")} />;
+    return (
+      <DictationPanel
+        title="听写单词"
+        fetchPath={`/api/recite/units/${unit.id}/dictation`}
+        operationLabel="忘记"
+        onOperation={forgetWord}
+        removeOnOperationSuccess={false}
+        onBack={() => setView("detail")}
+      />
+    );
+  }
+  if (view === "spelling") {
+    return (
+      <SpellingPanel
+        title="默写单词"
+        fetchPath={`/api/recite/units/${unit.id}/dictation`}
+        operationLabel="忘记"
+        onOperation={forgetWord}
+        removeOnOperationSuccess={false}
+        onBack={() => setView("detail")}
+      />
+    );
   }
 
   return (
@@ -314,11 +506,12 @@ function ReciteUnitPanel({ unit }) {
       <div className="panel-header-row">
         <h2>单元：{unit.name}</h2>
         <div className="unit-actions">
-          <button className="btn brand" onClick={() => setView("dictation")}>听写单词</button>
+          <button className="btn secondary" onClick={() => setView("dictation")}>听写单词</button>
+          <button className="btn secondary" onClick={() => setView("spelling")}>默写单词</button>
         </div>
       </div>
 
-      <section className="query-box">
+      <section>
         <div className="unit-actions">
           <input
             className="input"
@@ -334,19 +527,48 @@ function ReciteUnitPanel({ unit }) {
           <button className="btn" onClick={doQueryWord}>查询</button>
         </div>
         {queryWord && (
-          <div className="word-preview">
-            <div className="small-title">发音</div>
-            <div>
-              <span>英音：</span>
-              <a href="#" onClick={(e) => { e.preventDefault(); playAudio(queryWord.en_audio_url); }}>
-                {queryWord.ph_en || "-"}
+          <div>
+            <div className="desc-header">
+              <div className="small-title">发音</div>
+              <div className="desc-right-tools">
+                {queryWord.mean_tag && <span className="desc-tag">{queryWord.mean_tag}</span>}
+              </div>
+            </div>
+            <div className="yinbiao-inline">
+              <span>英音：[{queryWord.ph_en || "-"}]</span>
+              <a
+                className="play-icon-link"
+                href="#"
+                onMouseEnter={() => playAudio(queryWord.en_audio_url)}
+                onClick={(e) => {
+                  e.preventDefault();
+                  playAudio(queryWord.en_audio_url);
+                }}
+              >
+                {"\u25B6"}
               </a>
-              <span style={{ marginLeft: "12px" }}>美音：</span>
-              <a href="#" onClick={(e) => { e.preventDefault(); playAudio(queryWord.am_audio_url || queryWord.en_audio_url); }}>
-                {queryWord.ph_am || "-"}
+              <span className="yinbiao-gap">美音：[{queryWord.ph_am || "-"}]</span>
+              <a
+                className="play-icon-link"
+                href="#"
+                onMouseEnter={() => playAudio(queryWord.am_audio_url || queryWord.en_audio_url)}
+                onClick={(e) => {
+                  e.preventDefault();
+                  playAudio(queryWord.am_audio_url || queryWord.en_audio_url);
+                }}
+              >
+                {"\u25B6"}
               </a>
             </div>
-            <PartAndSentence row={{ word: queryWord.word, mean_tag: queryWord.mean_tag, parts: queryWord.parts, sentence_groups: queryWord.sentence_groups }} playAudio={playAudio} />
+            <div className="section-divider" />
+            <PartAndSentence
+              row={{
+                word: queryWord.word,
+                parts: queryWord.parts,
+                sentence_groups: queryWord.sentence_groups,
+              }}
+              playAudio={playAudio}
+            />
             <button className="btn brand" onClick={addWordToUnit}>添加到单元</button>
           </div>
         )}
@@ -356,16 +578,107 @@ function ReciteUnitPanel({ unit }) {
 
       <section>
         <h3>单元单词</h3>
-        <WordTable rows={wordRows} playAudio={playAudio} />
+        <WordTable
+          rows={wordRows}
+          playAudio={playAudio}
+          operationLabel="忘记"
+          onOperation={(word) => forgetWord(word).catch((err) => setError(err.message))}
+        />
       </section>
+    </div>
+  );
+}
+
+function ForgottenPanel({ notify }) {
+  const playAudio = useAudioPlayer();
+  const [view, setView] = useState("detail");
+  const [wordRows, setWordRows] = useState([]);
+  const [error, setError] = useState("");
+
+  function loadWords() {
+    return api("/api/recite/forgotten/words")
+      .then((data) => setWordRows(data.words || []));
+  }
+
+  useEffect(() => {
+    setError("");
+    loadWords().catch((err) => setError(err.message));
+  }, []);
+
+  function rememberWord(word) {
+    return api("/api/recite/forgotten/words/remember", {
+      method: "POST",
+      body: { word },
+    }).then(() => {
+      setWordRows((prev) => prev.filter((item) => item.word !== word));
+      if (notify) {
+        notify("已标记为记住");
+      }
+    });
+  }
+
+  if (view === "dictation") {
+    return (
+      <DictationPanel
+        title="听写单词（遗忘单词）"
+        fetchPath="/api/recite/forgotten/dictation"
+        operationLabel="记住"
+        onOperation={rememberWord}
+        removeOnOperationSuccess={true}
+        onBack={() => {
+          setView("detail");
+          loadWords().catch((err) => setError(err.message));
+        }}
+      />
+    );
+  }
+  if (view === "spelling") {
+    return (
+      <SpellingPanel
+        title="默写单词（遗忘单词）"
+        fetchPath="/api/recite/forgotten/dictation"
+        operationLabel="记住"
+        onOperation={rememberWord}
+        removeOnOperationSuccess={true}
+        onBack={() => {
+          setView("detail");
+          loadWords().catch((err) => setError(err.message));
+        }}
+      />
+    );
+  }
+
+  return (
+    <div className="right-panel-inner">
+      <div className="panel-header-row">
+        <h2>遗忘单词</h2>
+        <div className="unit-actions">
+          <button className="btn secondary" onClick={() => setView("dictation")}>听写单词</button>
+          <button className="btn secondary" onClick={() => setView("spelling")}>默写单词</button>
+        </div>
+      </div>
+
+      {error && <div className="error">{error}</div>}
+      {wordRows.length === 0 ? (
+        <p className="helper-tip">暂无遗忘单词。</p>
+      ) : (
+        <WordTable
+          rows={wordRows}
+          playAudio={playAudio}
+          operationLabel="记住"
+          onOperation={(word) => rememberWord(word).catch((err) => setError(err.message))}
+        />
+      )}
     </div>
   );
 }
 
 function SidebarRecite({
   units,
+  selectedType,
   selectedUnitId,
   onSelectUnit,
+  onSelectForgotten,
   onCreateUnit,
   onRenameUnit,
   searchKeyword,
@@ -375,6 +688,7 @@ function SidebarRecite({
 }) {
   const [editingUnitId, setEditingUnitId] = useState(0);
   const [editingName, setEditingName] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
   const [error, setError] = useState("");
 
   function startEdit(unit) {
@@ -393,10 +707,43 @@ function SidebarRecite({
       .catch((err) => setError(err.message));
   }
 
+  function submitCreate() {
+    Promise.resolve(onCreateUnit())
+      .then(() => {
+        setShowCreate(false);
+      })
+      .catch(() => {});
+  }
+
   return (
     <div className="sidebar-body">
       <div>
-        <h3 className="side-title">背单词</h3>
+        <div className="side-title-row">
+          <h3 className="side-title">背单词</h3>
+          <button
+            className="icon-btn"
+            title={showCreate ? "收起添加单元" : "添加单元"}
+            onClick={() => setShowCreate((v) => !v)}
+          >
+            +
+          </button>
+        </div>
+        {showCreate && (
+          <div className="sidebar-block create-row">
+            <input
+              className="input side-input"
+              placeholder="新单元名称"
+              value={createName}
+              onChange={(e) => onCreateNameChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  submitCreate();
+                }
+              }}
+            />
+            <button className="btn" onClick={submitCreate}>添加</button>
+          </div>
+        )}
         <div className="sidebar-block">
           <input
             className="input side-input"
@@ -405,29 +752,24 @@ function SidebarRecite({
             onChange={(e) => onSearchKeywordChange(e.target.value)}
           />
         </div>
-
-        <div className="sidebar-block create-row">
-          <input
-            className="input side-input"
-            placeholder="新单元名称"
-            value={createName}
-            onChange={(e) => onCreateNameChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                onCreateUnit();
-              }
-            }}
-          />
-          <button className="btn" onClick={onCreateUnit}>添加</button>
-        </div>
       </div>
 
       <ul className="unit-list side-unit-list">
+        <li className="unit-row-wrap">
+          <div className="unit-item-row">
+            <button
+              className={`unit-item unit-main-btn ${selectedType === "forgotten" ? "active" : ""}`}
+              onClick={onSelectForgotten}
+            >
+              遗忘单词
+            </button>
+          </div>
+        </li>
         {units.map((unit) => (
           <li key={unit.id} className="unit-row-wrap">
             <div className="unit-item-row">
               <button
-                className={`unit-item unit-main-btn ${selectedUnitId === unit.id ? "active" : ""}`}
+                className={`unit-item unit-main-btn ${selectedType === "unit" && selectedUnitId === unit.id ? "active" : ""}`}
                 onClick={() => onSelectUnit(unit.id)}
               >
                 {unit.name}
@@ -480,21 +822,45 @@ function SidebarTodo() {
 function App() {
   const [mode, setMode] = useState("recite");
   const [units, setUnits] = useState([]);
+  const [selectedReciteType, setSelectedReciteType] = useState("unit");
   const [selectedUnitId, setSelectedUnitId] = useState(0);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [createName, setCreateName] = useState("");
   const [globalError, setGlobalError] = useState("");
+  const [toast, setToast] = useState({ visible: false, text: "", ts: 0 });
+
+  function notify(text) {
+    setToast({ visible: true, text, ts: Date.now() });
+  }
+
+  useEffect(() => {
+    if (!toast.visible) {
+      return undefined;
+    }
+    const timer = setTimeout(() => {
+      setToast((prev) => ({ ...prev, visible: false }));
+    }, 1400);
+    return () => clearTimeout(timer);
+  }, [toast.visible, toast.ts]);
 
   function loadUnits() {
     api("/api/recite/units")
       .then((data) => {
         const rows = data.units || [];
         setUnits(rows);
-        if (rows.length > 0 && !rows.some((x) => x.id === selectedUnitId)) {
-          setSelectedUnitId(rows[0].id);
-        }
         if (rows.length === 0) {
           setSelectedUnitId(0);
+          setSelectedReciteType("forgotten");
+          return;
+        }
+        if (selectedReciteType === "unit") {
+          if (!rows.some((x) => x.id === selectedUnitId)) {
+            setSelectedUnitId(rows[0].id);
+          }
+          return;
+        }
+        if (selectedUnitId <= 0) {
+          setSelectedUnitId(rows[0].id);
         }
       })
       .catch((err) => setGlobalError(err.message));
@@ -519,7 +885,7 @@ function App() {
 
   function createUnit() {
     setGlobalError("");
-    api("/api/recite/units", {
+    return api("/api/recite/units", {
       method: "POST",
       body: { name: createName },
     })
@@ -528,10 +894,14 @@ function App() {
         setCreateName("");
         loadUnits();
         if (newUnit && newUnit.id) {
+          setSelectedReciteType("unit");
           setSelectedUnitId(newUnit.id);
         }
       })
-      .catch((err) => setGlobalError(err.message));
+      .catch((err) => {
+        setGlobalError(err.message);
+        throw err;
+      });
   }
 
   function renameUnit(unitId, name) {
@@ -555,8 +925,13 @@ function App() {
           {mode === "recite" ? (
             <SidebarRecite
               units={filteredUnits}
+              selectedType={selectedReciteType}
               selectedUnitId={selectedUnitId}
-              onSelectUnit={setSelectedUnitId}
+              onSelectUnit={(unitId) => {
+                setSelectedReciteType("unit");
+                setSelectedUnitId(unitId);
+              }}
+              onSelectForgotten={() => setSelectedReciteType("forgotten")}
               onCreateUnit={createUnit}
               onRenameUnit={renameUnit}
               searchKeyword={searchKeyword}
@@ -589,18 +964,23 @@ function App() {
 
           {mode === "todo" && <TodoPanel />}
 
-          {mode === "recite" && !selectedUnit && (
+          {mode === "recite" && selectedReciteType === "forgotten" && (
+            <ForgottenPanel notify={notify} />
+          )}
+
+          {mode === "recite" && selectedReciteType === "unit" && !selectedUnit && (
             <div className="right-panel-inner">
               <h2>请选择单元</h2>
               <p className="helper-tip">左侧可以添加单元、搜索单元并点击进入内容。</p>
             </div>
           )}
 
-          {mode === "recite" && selectedUnit && (
-            <ReciteUnitPanel unit={selectedUnit} />
+          {mode === "recite" && selectedReciteType === "unit" && selectedUnit && (
+            <ReciteUnitPanel unit={selectedUnit} notify={notify} />
           )}
         </main>
       </div>
+      <div className={`toast-tip ${toast.visible ? "show" : ""}`}>{toast.text}</div>
     </div>
   );
 }

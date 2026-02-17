@@ -35,6 +35,13 @@ var ddlList = []string{
 		CONSTRAINT fk_unit_word_unit FOREIGN KEY (unit_id) REFERENCES recite_units(id),
 		CONSTRAINT fk_unit_word_word FOREIGN KEY (word_id) REFERENCES words(id)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`,
+	`CREATE TABLE IF NOT EXISTS forgotten_words (
+		word VARCHAR(128) NOT NULL,
+		remembered TINYINT NOT NULL DEFAULT 0,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		KEY idx_word(word),
+		KEY idx_remembered(remembered)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`,
 }
 
 func AutoMigrate(db *sql.DB) error {

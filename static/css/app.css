@@ -210,6 +210,20 @@ a:hover {
   gap: 6px;
 }
 
+.unit-row-wrap.sortable {
+  cursor: grab;
+}
+
+.unit-row-wrap.sortable:active {
+  cursor: grabbing;
+}
+
+.unit-row-wrap.drag-over .unit-item-row {
+  outline: 2px dashed #2563eb;
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+
 .unit-item-row {
   display: flex;
   align-items: center;

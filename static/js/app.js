@@ -690,16 +690,22 @@ function ReciteUnitPanel({ unit, notify }) {
   const [wordInput, setWordInput] = useState("");
   const [queryWord, setQueryWord] = useState(null);
   const [wordRows, setWordRows] = useState([]);
+  const [loadingWords, setLoadingWords] = useState(true);
   const [error, setError] = useState("");
 
   function loadWords() {
+    setLoadingWords(true);
     return api(`/api/recite/units/${unit.id}/words`)
-      .then((data) => setWordRows(data.words || []));
+      .then((data) => setWordRows(data.words || []))
+      .finally(() => setLoadingWords(false));
   }
 
   useEffect(() => {
     setView("detail");
+    setWordInput("");
     setQueryWord(null);
+    setWordRows([]);
+    setLoadingWords(true);
     setError("");
     loadWords().catch((err) => setError(err.message));
   }, [unit.id]);
@@ -759,6 +765,15 @@ function ReciteUnitPanel({ unit, notify }) {
         removeOnOperationSuccess={false}
         onBack={() => setView("detail")}
       />
+    );
+  }
+
+  if (loadingWords) {
+    return (
+      <div className="right-panel-inner">
+        <h2>单元：{unit.name}</h2>
+        <p className="helper-tip">加载中...</p>
+      </div>
     );
   }
 
@@ -1420,6 +1435,7 @@ function SidebarRecite({
   onSelectForgotten,
   onCreateUnit,
   onRenameUnit,
+  onReorderUnits,
   searchKeyword,
   onSearchKeywordChange,
   createName,
@@ -1428,7 +1444,10 @@ function SidebarRecite({
   const [editingUnitId, setEditingUnitId] = useState(0);
   const [editingName, setEditingName] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [draggingUnitId, setDraggingUnitId] = useState(0);
+  const [dropUnitId, setDropUnitId] = useState(0);
   const [error, setError] = useState("");
+  const canReorder = searchKeyword.trim() === "" && editingUnitId === 0;
 
   function startEdit(unit) {
     setError("");
@@ -1452,6 +1471,32 @@ function SidebarRecite({
         setShowCreate(false);
       })
       .catch(() => {});
+  }
+
+  function reorderByDrag(fromUnitID, toUnitID) {
+    if (!canReorder || !onReorderUnits || fromUnitID <= 0 || toUnitID <= 0 || fromUnitID === toUnitID) {
+      return;
+    }
+
+    const currentIDs = units.map((item) => item.id);
+    const fromIdx = currentIDs.indexOf(fromUnitID);
+    const toIdx = currentIDs.indexOf(toUnitID);
+    if (fromIdx < 0 || toIdx < 0) {
+      return;
+    }
+    const nextIDs = currentIDs.slice();
+    const moved = nextIDs.splice(fromIdx, 1)[0];
+    nextIDs.splice(toIdx, 0, moved);
+
+    setError("");
+    Promise.resolve(onReorderUnits(nextIDs))
+      .catch((err) => {
+        setError(err.message);
+      })
+      .finally(() => {
+        setDraggingUnitId(0);
+        setDropUnitId(0);
+      });
   }
 
   return (
@@ -1505,7 +1550,42 @@ function SidebarRecite({
           </div>
         </li>
         {units.map((unit) => (
-          <li key={unit.id} className="unit-row-wrap">
+          <li
+            key={unit.id}
+            className={`unit-row-wrap ${canReorder ? "sortable" : ""} ${dropUnitId === unit.id && draggingUnitId !== unit.id ? "drag-over" : ""}`}
+            draggable={canReorder}
+            onDragStart={(e) => {
+              if (!canReorder) {
+                return;
+              }
+              setDraggingUnitId(unit.id);
+              e.dataTransfer.effectAllowed = "move";
+              e.dataTransfer.setData("text/plain", String(unit.id));
+            }}
+            onDragOver={(e) => {
+              if (!canReorder) {
+                return;
+              }
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+              if (draggingUnitId > 0 && draggingUnitId !== unit.id) {
+                setDropUnitId(unit.id);
+              }
+            }}
+            onDrop={(e) => {
+              if (!canReorder) {
+                return;
+              }
+              e.preventDefault();
+              const raw = e.dataTransfer.getData("text/plain");
+              const fromUnitID = raw ? Number(raw) : draggingUnitId;
+              reorderByDrag(fromUnitID, unit.id);
+            }}
+            onDragEnd={() => {
+              setDraggingUnitId(0);
+              setDropUnitId(0);
+            }}
+          >
             <div className="unit-item-row">
               <button
                 className={`unit-item unit-main-btn ${selectedType === "unit" && selectedUnitId === unit.id ? "active" : ""}`}
@@ -1544,6 +1624,7 @@ function SidebarRecite({
           </li>
         ))}
       </ul>
+      {canReorder && units.length > 1 && <div className="helper-tip">可拖拽单元排序</div>}
       {error && <div className="error">{error}</div>}
     </div>
   );
@@ -1659,6 +1740,33 @@ function App() {
     });
   }
 
+  function reorderUnits(unitIDs) {
+    setGlobalError("");
+    return api("/api/recite/units/order", {
+      method: "PUT",
+      body: { unit_ids: unitIDs },
+    }).then(() => {
+      setUnits((prev) => {
+        const byID = new Map(prev.map((item) => [item.id, item]));
+        const next = [];
+        const seen = new Set();
+        unitIDs.forEach((id) => {
+          const row = byID.get(id);
+          if (row) {
+            next.push(row);
+            seen.add(id);
+          }
+        });
+        prev.forEach((item) => {
+          if (!seen.has(item.id)) {
+            next.push(item);
+          }
+        });
+        return next;
+      });
+    });
+  }
+
   if (isMobile) {
     const shouldShowBottomNav = mode === "todo" || (mode === "recite" && showMobileRootNav);
     return (
@@ -1713,6 +1821,7 @@ function App() {
               onSelectForgotten={() => setSelectedReciteType("forgotten")}
               onCreateUnit={createUnit}
               onRenameUnit={renameUnit}
+              onReorderUnits={reorderUnits}
               searchKeyword={searchKeyword}
               onSearchKeywordChange={setSearchKeyword}
               createName={createName}
@@ -1755,7 +1864,7 @@ function App() {
           )}
 
           {mode === "recite" && selectedReciteType === "unit" && selectedUnit && (
-            <ReciteUnitPanel unit={selectedUnit} notify={notify} />
+            <ReciteUnitPanel key={selectedUnit.id} unit={selectedUnit} notify={notify} />
           )}
         </main>
       </div>

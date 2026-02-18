@@ -90,6 +90,36 @@ func (s *Service) RenameUnit(ctx context.Context, unitID int64, name string) err
 	return s.unitRepo.Rename(ctx, unitID, name)
 }
 
+func (s *Service) ReorderUnits(ctx context.Context, unitIDs []int64) error {
+	if len(unitIDs) == 0 {
+		return NewBizError(1001, "排序列表不能为空")
+	}
+
+	seen := make(map[int64]struct{}, len(unitIDs))
+	for _, id := range unitIDs {
+		if id <= 0 {
+			return NewBizError(1001, "unit_id 非法")
+		}
+		if _, ok := seen[id]; ok {
+			return NewBizError(1001, "排序列表包含重复单元")
+		}
+		seen[id] = struct{}{}
+	}
+
+	total, err := s.unitRepo.Count(ctx)
+	if err != nil {
+		return err
+	}
+	if int64(len(unitIDs)) != total {
+		return NewBizError(1001, "排序列表必须包含全部单元")
+	}
+
+	if err := s.unitRepo.Reorder(ctx, unitIDs); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *Service) QueryWord(ctx context.Context, rawWord string) (*WordInfo, error) {
 	word := strings.ToLower(strings.TrimSpace(rawWord))
 	if word == "" {

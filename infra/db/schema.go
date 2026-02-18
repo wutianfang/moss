@@ -22,8 +22,10 @@ var ddlList = []string{
 	`CREATE TABLE IF NOT EXISTS recite_units (
 		id BIGINT PRIMARY KEY AUTO_INCREMENT,
 		name VARCHAR(255) NOT NULL,
+		sort_order BIGINT NOT NULL DEFAULT 0,
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		KEY idx_sort_order(sort_order, id)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`,
 	`CREATE TABLE IF NOT EXISTS recite_unit_words (
 		id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -54,6 +56,15 @@ func AutoMigrate(db *sql.DB) error {
 	if err := addColumnIfMissing(db, `ALTER TABLE words ADD COLUMN mean_tag VARCHAR(255) NOT NULL DEFAULT '' AFTER ph_am`); err != nil {
 		return fmt.Errorf("add words.mean_tag failed: %w", err)
 	}
+	if err := addColumnIfMissing(db, `ALTER TABLE recite_units ADD COLUMN sort_order BIGINT NOT NULL DEFAULT 0 AFTER name`); err != nil {
+		return fmt.Errorf("add recite_units.sort_order failed: %w", err)
+	}
+	if err := addIndexIfMissing(db, `ALTER TABLE recite_units ADD INDEX idx_sort_order(sort_order, id)`); err != nil {
+		return fmt.Errorf("add recite_units.idx_sort_order failed: %w", err)
+	}
+	if _, err := db.Exec(`UPDATE recite_units SET sort_order = id WHERE sort_order = 0`); err != nil {
+		return fmt.Errorf("fill recite_units.sort_order failed: %w", err)
+	}
 	if err := dropColumnIfExists(db, `ALTER TABLE words DROP COLUMN en_audio_path`); err != nil {
 		return fmt.Errorf("drop words.en_audio_path failed: %w", err)
 	}
@@ -69,6 +80,18 @@ func addColumnIfMissing(db *sql.DB, ddl string) error {
 		return nil
 	}
 	if strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return nil
+	}
+	return err
+}
+
+func addIndexIfMissing(db *sql.DB, ddl string) error {
+	_, err := db.Exec(ddl)
+	if err == nil {
+		return nil
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "duplicate key name") || strings.Contains(msg, "already exists") {
 		return nil
 	}
 	return err

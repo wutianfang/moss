@@ -34,6 +34,7 @@ func registerRoutes(e *echo.Echo, cfg *conf.Config, db *sql.DB) {
 	reciteGroup.GET("/units", recitehandler.ListUnits(reciteService))
 	reciteGroup.POST("/units", recitehandler.CreateUnit(reciteService))
 	reciteGroup.PUT("/units/:unitId/name", recitehandler.RenameUnit(reciteService))
+	reciteGroup.PUT("/units/order", recitehandler.ReorderUnits(reciteService))
 	reciteGroup.POST("/words/query", recitehandler.QueryWord(reciteService))
 	reciteGroup.POST("/units/:unitId/words", recitehandler.AddUnitWord(reciteService))
 	reciteGroup.GET("/units/:unitId/words", recitehandler.ListUnitWords(reciteService))

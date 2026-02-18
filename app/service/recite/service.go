@@ -10,6 +10,7 @@ import (
 	"github.com/wutianfang/moss/infra/recite/entity"
 	"github.com/wutianfang/moss/infra/recite/fetcher"
 	"github.com/wutianfang/moss/infra/recite/repository"
+	"github.com/wutianfang/moss/util"
 )
 
 const datetimeLayout = "2006-01-02 15:04:05"
@@ -177,22 +178,29 @@ func (s *Service) AddWordToUnit(ctx context.Context, unitID int64, rawWord strin
 }
 
 func (s *Service) ListUnitWords(ctx context.Context, unitID int64) ([]UnitWordItem, error) {
+	util.InfofWithRequest(ctx, "recite.list_unit_words.begin", "unit_id=%d", unitID)
 	if unitID <= 0 {
+		util.InfofWithRequest(ctx, "recite.list_unit_words.invalid_unit_id", "unit_id=%d", unitID)
 		return nil, NewBizError(1001, "unit_id 非法")
 	}
 	unit, err := s.unitRepo.GetByID(ctx, unitID)
 	if err != nil {
+		util.ErrorfWithRequest(ctx, "recite.list_unit_words.get_unit_failed", "unit_id=%d err=%v", unitID, err)
 		return nil, err
 	}
+	util.InfofWithRequest(ctx, "recite.list_unit_words.after_get_unit", "unit_exists=%t", unit != nil)
 	if unit == nil {
 		return nil, NewBizError(1002, "单元不存在")
 	}
 
 	relations, err := s.unitWordRepo.ListByUnitID(ctx, unitID)
 	if err != nil {
+		util.ErrorfWithRequest(ctx, "recite.list_unit_words.list_relations_failed", "unit_id=%d err=%v", unitID, err)
 		return nil, err
 	}
+	util.InfofWithRequest(ctx, "recite.list_unit_words.after_list_relations", "relation_count=%d", len(relations))
 	if len(relations) == 0 {
+		util.InfofWithRequest(ctx, "recite.list_unit_words.empty", "unit_id=%d", unitID)
 		return []UnitWordItem{}, nil
 	}
 
@@ -200,10 +208,13 @@ func (s *Service) ListUnitWords(ctx context.Context, unitID int64) ([]UnitWordIt
 	for _, relation := range relations {
 		ids = append(ids, relation.WordID)
 	}
+	util.InfofWithRequest(ctx, "recite.list_unit_words.after_collect_word_ids", "word_id_count=%d", len(ids))
 	wordMap, err := s.wordRepo.GetByIDs(ctx, ids)
 	if err != nil {
+		util.ErrorfWithRequest(ctx, "recite.list_unit_words.get_words_failed", "unit_id=%d ids=%d err=%v", unitID, len(ids), err)
 		return nil, err
 	}
+	util.InfofWithRequest(ctx, "recite.list_unit_words.after_get_words", "word_map_count=%d", len(wordMap))
 
 	ret := make([]UnitWordItem, 0, len(relations))
 	for _, relation := range relations {
@@ -213,6 +224,7 @@ func (s *Service) ListUnitWords(ctx context.Context, unitID int64) ([]UnitWordIt
 		}
 		ret = append(ret, buildUnitWordItem(word, len(ret)+1))
 	}
+	util.InfofWithRequest(ctx, "recite.list_unit_words.finish", "output_count=%d", len(ret))
 	return ret, nil
 }
 

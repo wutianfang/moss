@@ -18,6 +18,7 @@ func main() {
 	if err := util.InitLogger(cfg.Log.Dir); err != nil {
 		log.Fatalf("init logger failed: %v", err)
 	}
+	util.SetRequestLogEnabled(cfg.Log.EnableRequestLog)
 
 	database, err := db.InitMySQL(&cfg.MySQL)
 	if err != nil {
@@ -30,6 +31,7 @@ func main() {
 	}
 
 	e := echo.New()
+	e.Use(util.RequestLogIDMiddleware())
 	registerRoutes(e, cfg, database)
 
 	util.Infof("server starting at %s", cfg.Server.Addr)

@@ -30,7 +30,8 @@ type ConfigStorage struct {
 }
 
 type ConfigLog struct {
-	Dir string `yaml:"dir"`
+	Dir              string `yaml:"dir"`
+	EnableRequestLog bool   `yaml:"enable_request_log"`
 }
 
 func Load(path string) (*Config, error) {
@@ -56,6 +57,7 @@ func defaultConfig() *Config {
 	cfg.MySQL.ConnMaxLifetimeSec = 300
 	cfg.Storage.WordMP3Dir = "store/word_mp3"
 	cfg.Log.Dir = "log"
+	cfg.Log.EnableRequestLog = false
 	return cfg
 }
 

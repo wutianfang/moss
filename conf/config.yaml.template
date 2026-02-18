@@ -9,3 +9,4 @@ storage:
   word_mp3_dir: "store/word_mp3"
 log:
   dir: "log"
+  enable_request_log: false

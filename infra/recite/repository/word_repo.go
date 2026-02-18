@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/wutianfang/moss/infra/recite/entity"
+	"github.com/wutianfang/moss/util"
 )
 
 type WordRepository struct {
@@ -18,14 +20,20 @@ func NewWordRepository(db *sql.DB) *WordRepository {
 }
 
 func (r *WordRepository) GetByWord(ctx context.Context, word string) (*entity.Word, error) {
+	start := time.Now()
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, word, ph_en, ph_am, mean_tag, parts_json, sentences_json, created_at, updated_at
 		FROM words WHERE word = ? LIMIT 1`, word)
 
-	item, err := scanWord(row)
+	raw, err := scanWordRaw(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
+	if err != nil {
+		util.ErrorfWithRequest(ctx, "repo.word.scan_word.scan_failed", "self_ms=%d err=%v", time.Since(start).Milliseconds(), err)
+		return nil, err
+	}
+	item, err := scanWord(ctx, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -46,23 +54,45 @@ func (r *WordRepository) GetByIDs(ctx context.Context, ids []int64) (map[int64]*
 		args = append(args, ids[i])
 	}
 	query += `)`
+	util.InfofWithRequest(ctx, "repo.word.get_by_ids.sql", "query=%s args=%v", query, args)
 
+	queryStart := time.Now()
 	rows, err := r.db.QueryContext(ctx, query, args...)
+	queryMS := time.Since(queryStart).Milliseconds()
 	if err != nil {
+		util.ErrorfWithRequest(ctx, "repo.word.get_by_ids.query_failed", "query_ms=%d err=%v", queryMS, err)
 		return nil, err
 	}
-	defer rows.Close()
-
+	util.InfofWithRequest(ctx, "repo.word.get_by_ids.query_done", "query_ms=%d", queryMS)
+	readStart := time.Now()
+	rawRows := make([]*wordRawRow, 0, len(ids))
 	for rows.Next() {
-		item, err := scanWord(rows)
+		raw, err := scanWordRaw(rows)
+		if err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		rawRows = append(rawRows, raw)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	util.InfofWithRequest(ctx, "repo.word.get_by_ids.rows_loaded", "row_count=%d read_ms=%d", len(rawRows), time.Since(readStart).Milliseconds())
+
+	parseStart := time.Now()
+	for _, raw := range rawRows {
+		item, err := scanWord(ctx, raw)
 		if err != nil {
 			return nil, err
 		}
 		ret[item.ID] = item
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
+	util.InfofWithRequest(ctx, "repo.word.get_by_ids.parse_done", "row_count=%d parse_ms=%d", len(rawRows), time.Since(parseStart).Milliseconds())
+
 	return ret, nil
 }
 
@@ -95,30 +125,60 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
-func scanWord(s scanner) (*entity.Word, error) {
-	item := &entity.Word{}
-	var partsJSON string
-	var sentencesJSON string
+type wordRawRow struct {
+	ID            int64
+	Word          string
+	PhEn          string
+	PhAm          string
+	MeanTag       string
+	PartsJSON     string
+	SentencesJSON string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+func scanWordRaw(s scanner) (*wordRawRow, error) {
+	raw := &wordRawRow{}
 	if err := s.Scan(
-		&item.ID,
-		&item.Word,
-		&item.PhEn,
-		&item.PhAm,
-		&item.MeanTag,
-		&partsJSON,
-		&sentencesJSON,
-		&item.CreatedAt,
-		&item.UpdatedAt,
+		&raw.ID,
+		&raw.Word,
+		&raw.PhEn,
+		&raw.PhAm,
+		&raw.MeanTag,
+		&raw.PartsJSON,
+		&raw.SentencesJSON,
+		&raw.CreatedAt,
+		&raw.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
-	if partsJSON != "" {
-		if err := json.Unmarshal([]byte(partsJSON), &item.Parts); err != nil {
+	return raw, nil
+}
+
+func scanWord(ctx context.Context, raw *wordRawRow) (*entity.Word, error) {
+	start := time.Now()
+	item := &entity.Word{}
+	if raw == nil {
+		util.ErrorfWithRequest(ctx, "repo.word.scan_word.scan_failed", "self_ms=%d err=%v", time.Since(start).Milliseconds(), "raw row is nil")
+		return nil, fmt.Errorf("raw row is nil")
+	}
+	item.ID = raw.ID
+	item.Word = raw.Word
+	item.PhEn = raw.PhEn
+	item.PhAm = raw.PhAm
+	item.MeanTag = raw.MeanTag
+	item.CreatedAt = raw.CreatedAt
+	item.UpdatedAt = raw.UpdatedAt
+
+	if raw.PartsJSON != "" {
+		if err := json.Unmarshal([]byte(raw.PartsJSON), &item.Parts); err != nil {
+			util.ErrorfWithRequest(ctx, "repo.word.scan_word.parts_unmarshal_failed", "self_ms=%d word=%s err=%v", time.Since(start).Milliseconds(), item.Word, err)
 			return nil, fmt.Errorf("unmarshal parts failed: %w", err)
 		}
 	}
-	if sentencesJSON != "" {
-		if err := json.Unmarshal([]byte(sentencesJSON), &item.SentenceGroups); err != nil {
+	if raw.SentencesJSON != "" {
+		if err := json.Unmarshal([]byte(raw.SentencesJSON), &item.SentenceGroups); err != nil {
+			util.ErrorfWithRequest(ctx, "repo.word.scan_word.sentences_unmarshal_failed", "self_ms=%d word=%s err=%v", time.Since(start).Milliseconds(), item.Word, err)
 			return nil, fmt.Errorf("unmarshal sentence groups failed: %w", err)
 		}
 	}

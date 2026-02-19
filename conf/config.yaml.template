@@ -7,6 +7,8 @@ mysql:
   conn_max_lifetime_sec: 300
 storage:
   word_mp3_dir: "store/word_mp3"
+recite:
+  default_accent: "en"
 log:
   dir: "log"
   enable_request_log: false

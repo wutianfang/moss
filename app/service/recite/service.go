@@ -23,6 +23,7 @@ type Service struct {
 	unitWordRepo  *repository.UnitWordRepository
 	forgottenRepo *repository.ForgottenWordRepository
 	wordFetcher   fetcher.WordFetcher
+	defaultAccent string
 }
 
 func NewService(
@@ -31,6 +32,7 @@ func NewService(
 	unitWordRepo *repository.UnitWordRepository,
 	forgottenRepo *repository.ForgottenWordRepository,
 	wordFetcher fetcher.WordFetcher,
+	defaultAccent string,
 ) *Service {
 	return &Service{
 		wordRepo:      wordRepo,
@@ -38,6 +40,13 @@ func NewService(
 		unitWordRepo:  unitWordRepo,
 		forgottenRepo: forgottenRepo,
 		wordFetcher:   wordFetcher,
+		defaultAccent: normalizeAccent(defaultAccent),
+	}
+}
+
+func (s *Service) GetClientConfig() ClientConfig {
+	return ClientConfig{
+		DefaultAccent: normalizeAccent(s.defaultAccent),
 	}
 }
 
@@ -304,6 +313,15 @@ func normalizeWord(rawWord string) (string, error) {
 		return "", NewBizError(1001, "单词格式非法，仅支持英文字母/单引号/短横线")
 	}
 	return word, nil
+}
+
+func normalizeAccent(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "am":
+		return "am"
+	default:
+		return "en"
+	}
 }
 
 func (s *Service) listWordsByText(ctx context.Context, words []string) ([]UnitWordItem, error) {

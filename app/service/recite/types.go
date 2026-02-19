@@ -41,6 +41,10 @@ type UnitInfo struct {
 	CreatedAt string `json:"created_at"`
 }
 
+type ClientConfig struct {
+	DefaultAccent string `json:"default_accent"`
+}
+
 type UnitWordItem struct {
 	Seq            int                 `json:"seq"`
 	Word           string              `json:"word"`

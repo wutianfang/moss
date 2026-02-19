@@ -3,6 +3,7 @@ package conf
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -11,6 +12,7 @@ type Config struct {
 	Server  ConfigServer  `yaml:"server"`
 	MySQL   ConfigMySQL   `yaml:"mysql"`
 	Storage ConfigStorage `yaml:"storage"`
+	Recite  ConfigRecite  `yaml:"recite"`
 	Log     ConfigLog     `yaml:"log"`
 }
 
@@ -27,6 +29,10 @@ type ConfigMySQL struct {
 
 type ConfigStorage struct {
 	WordMP3Dir string `yaml:"word_mp3_dir"`
+}
+
+type ConfigRecite struct {
+	DefaultAccent string `yaml:"default_accent"`
 }
 
 type ConfigLog struct {
@@ -56,6 +62,7 @@ func defaultConfig() *Config {
 	cfg.MySQL.MaxIdleConns = 5
 	cfg.MySQL.ConnMaxLifetimeSec = 300
 	cfg.Storage.WordMP3Dir = "store/word_mp3"
+	cfg.Recite.DefaultAccent = "en"
 	cfg.Log.Dir = "log"
 	cfg.Log.EnableRequestLog = false
 	return cfg
@@ -77,7 +84,19 @@ func fillDefault(cfg *Config) {
 	if cfg.Storage.WordMP3Dir == "" {
 		cfg.Storage.WordMP3Dir = "store/word_mp3"
 	}
+	cfg.Recite.DefaultAccent = normalizeAccent(cfg.Recite.DefaultAccent)
 	if cfg.Log.Dir == "" {
 		cfg.Log.Dir = "log"
+	}
+}
+
+func normalizeAccent(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "am":
+		return "am"
+	case "en":
+		return "en"
+	default:
+		return "en"
 	}
 }

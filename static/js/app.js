@@ -57,6 +57,29 @@ function normalizeWordText(raw) {
   return (raw || "").trim().toLowerCase();
 }
 
+function getEnglishAudio(row) {
+  if (!row) {
+    return "";
+  }
+  return row.en_audio || row.en_audio_url || "";
+}
+
+function getAmericanAudio(row) {
+  if (!row) {
+    return "";
+  }
+  return row.am_audio || row.am_audio_url || "";
+}
+
+function getDefaultAudio(row, accent) {
+  const en = getEnglishAudio(row);
+  const am = getAmericanAudio(row);
+  if (accent === "am") {
+    return am || en;
+  }
+  return en || am;
+}
+
 function formatMeaningLines(parts, limit = 0) {
   const rows = (parts || []).map((part) => {
     const means = Array.isArray(part.means) ? part.means.join("；") : "";
@@ -285,7 +308,15 @@ function TodoPanel() {
   );
 }
 
-function DictationPanel({ title, fetchPath, onBack, operationLabel, onOperation, removeOnOperationSuccess }) {
+function DictationPanel({
+  title,
+  fetchPath,
+  onBack,
+  operationLabel,
+  onOperation,
+  removeOnOperationSuccess,
+  defaultAccent,
+}) {
   const playAudio = useAudioPlayer();
   const [words, setWords] = useState([]);
   const [index, setIndex] = useState(-1);
@@ -350,11 +381,11 @@ function DictationPanel({ title, fetchPath, onBack, operationLabel, onOperation,
         return;
       }
       const row = words[index];
-      playAudio(row.am_audio || row.en_audio);
+      playAudio(getDefaultAudio(row, defaultAccent));
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [index, words, playAudio]);
+  }, [index, words, playAudio, defaultAccent]);
 
   function submitCurrentInput() {
     if (index < 0 || index >= words.length) {
@@ -380,7 +411,7 @@ function DictationPanel({ title, fetchPath, onBack, operationLabel, onOperation,
     if (index < 0) {
       setIndex(0);
       setInputValue("");
-      playAudio(words[0].am_audio || words[0].en_audio);
+      playAudio(getDefaultAudio(words[0], defaultAccent));
       return;
     }
     submitCurrentInput();
@@ -392,7 +423,7 @@ function DictationPanel({ title, fetchPath, onBack, operationLabel, onOperation,
     const nextIndex = index + 1;
     const row = words[nextIndex];
     setIndex(nextIndex);
-    playAudio(row.am_audio || row.en_audio);
+    playAudio(getDefaultAudio(row, defaultAccent));
   }
 
   function repeatCurrent() {
@@ -400,7 +431,7 @@ function DictationPanel({ title, fetchPath, onBack, operationLabel, onOperation,
       return;
     }
     const row = words[index];
-    playAudio(row.am_audio || row.en_audio);
+    playAudio(getDefaultAudio(row, defaultAccent));
   }
 
   function operateCurrentAndSkip() {
@@ -419,7 +450,7 @@ function DictationPanel({ title, fetchPath, onBack, operationLabel, onOperation,
         const nextIndex = index + 1;
         const next = words[nextIndex];
         setIndex(nextIndex);
-        playAudio(next.am_audio || next.en_audio);
+        playAudio(getDefaultAudio(next, defaultAccent));
       })
       .catch((err) => setError(err.message));
   }
@@ -684,7 +715,7 @@ function SpellingPanel({ title, fetchPath, onBack, operationLabel, onOperation, 
   );
 }
 
-function ReciteUnitPanel({ unit, notify }) {
+function ReciteUnitPanel({ unit, notify, defaultAccent }) {
   const playAudio = useAudioPlayer();
   const [view, setView] = useState("detail");
   const [wordInput, setWordInput] = useState("");
@@ -715,7 +746,7 @@ function ReciteUnitPanel({ unit, notify }) {
     api("/api/recite/words/query", { method: "POST", body: { word: wordInput } })
       .then((data) => {
         setQueryWord(data.word);
-        playAudio(data.word.en_audio_url || data.word.am_audio_url);
+        playAudio(getDefaultAudio(data.word, defaultAccent));
       })
       .catch((err) => setError(err.message));
   }
@@ -751,6 +782,7 @@ function ReciteUnitPanel({ unit, notify }) {
         operationLabel="忘记"
         onOperation={forgetWord}
         removeOnOperationSuccess={false}
+        defaultAccent={defaultAccent}
         onBack={() => setView("detail")}
       />
     );
@@ -865,7 +897,7 @@ function ReciteUnitPanel({ unit, notify }) {
   );
 }
 
-function ForgottenPanel({ notify }) {
+function ForgottenPanel({ notify, defaultAccent }) {
   const playAudio = useAudioPlayer();
   const [view, setView] = useState("detail");
   const [wordRows, setWordRows] = useState([]);
@@ -901,6 +933,7 @@ function ForgottenPanel({ notify }) {
         operationLabel="记住"
         onOperation={rememberWord}
         removeOnOperationSuccess={true}
+        defaultAccent={defaultAccent}
         onBack={() => {
           setView("detail");
           loadWords().catch((err) => setError(err.message));
@@ -999,6 +1032,7 @@ function MobileQuizPanel({
   onBack,
   operationLabel,
   onOperation,
+  defaultAccent,
 }) {
   const playAudio = useAudioPlayer();
   const inputRef = useRef(null);
@@ -1039,9 +1073,9 @@ function MobileQuizPanel({
 
   useEffect(() => {
     if (type === "dictation" && current && !revealed) {
-      playAudio(current.am_audio || current.en_audio);
+      playAudio(getDefaultAudio(current, defaultAccent));
     }
-  }, [type, current && current.word, revealed]);
+  }, [type, current && current.word, revealed, defaultAccent, playAudio]);
 
   useEffect(() => {
     if (loading || finished || !current || revealed) {
@@ -1085,7 +1119,7 @@ function MobileQuizPanel({
     setResult(ok ? "correct" : "wrong");
     setRevealed(true);
     if (type === "spelling") {
-      playAudio(current.am_audio || current.en_audio);
+      playAudio(getDefaultAudio(current, defaultAccent));
     }
   }
 
@@ -1165,7 +1199,7 @@ function MobileQuizPanel({
           {type === "dictation" && (
             <button
               className="btn secondary mobile-replay-btn"
-              onClick={() => playAudio(current.am_audio || current.en_audio)}
+              onClick={() => playAudio(getDefaultAudio(current, defaultAccent))}
             >
               重播
             </button>
@@ -1198,7 +1232,7 @@ function MobileQuizPanel({
   );
 }
 
-function MobileReciteRoot({ units, notify, onRootHomeChange }) {
+function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
   const playAudio = useAudioPlayer();
   const [view, setView] = useState("home");
   const [context, setContext] = useState({ kind: "unit", unitId: 0, name: "" });
@@ -1206,12 +1240,145 @@ function MobileReciteRoot({ units, notify, onRootHomeChange }) {
   const [selectedWord, setSelectedWord] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const unitScrollRef = useRef(null);
+  const unitScrollTopRef = useRef(0);
+  const pageScrollTopRef = useRef(0);
+  const pendingRestoreScrollTopRef = useRef(null);
+  const pendingRestorePageScrollTopRef = useRef(null);
+
+  function buildNavState(nextView, nextContext, nextSelectedWord, nextUnitScrollTop, nextPageScrollTop) {
+    return {
+      __moss_mobile_recite_nav: true,
+      view: nextView,
+      context_kind: nextContext.kind,
+      context_unit_id: nextContext.unitId,
+      context_name: nextContext.name,
+      selected_word: nextSelectedWord || null,
+      unit_scroll_top: typeof nextUnitScrollTop === "number" ? Math.max(nextUnitScrollTop, 0) : 0,
+      page_scroll_top: typeof nextPageScrollTop === "number" ? Math.max(nextPageScrollTop, 0) : 0,
+    };
+  }
+
+  function parseNavState(state) {
+    if (!state || !state.__moss_mobile_recite_nav) {
+      return null;
+    }
+    const nextContext = {
+      kind: state.context_kind === "forgotten" ? "forgotten" : "unit",
+      unitId: Number(state.context_unit_id) || 0,
+      name: state.context_name || "",
+    };
+    return {
+      view: state.view || "home",
+      context: nextContext,
+      selectedWord: state.selected_word || null,
+      unitScrollTop: Math.max(Number(state.unit_scroll_top) || 0, 0),
+      pageScrollTop: Math.max(Number(state.page_scroll_top) || 0, 0),
+    };
+  }
+
+  function pushNavState(nextView, nextContext, nextSelectedWord, nextUnitScrollTop, nextPageScrollTop) {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.history.pushState(
+      buildNavState(nextView, nextContext, nextSelectedWord, nextUnitScrollTop, nextPageScrollTop),
+      "",
+      window.location.href,
+    );
+  }
+
+  function replaceCurrentNavState(nextView, nextContext, nextSelectedWord, nextUnitScrollTop, nextPageScrollTop) {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.history.replaceState(
+      buildNavState(nextView, nextContext, nextSelectedWord, nextUnitScrollTop, nextPageScrollTop),
+      "",
+      window.location.href,
+    );
+  }
+
+  function currentUnitScrollTop() {
+    if (unitScrollRef.current) {
+      return Math.max(unitScrollRef.current.scrollTop || 0, 0);
+    }
+    return Math.max(unitScrollTopRef.current || 0, 0);
+  }
+
+  function currentPageScrollTop() {
+    if (typeof window === "undefined") {
+      return Math.max(pageScrollTopRef.current || 0, 0);
+    }
+    return Math.max(window.scrollY || 0, 0);
+  }
+
+  function applyNav(nav) {
+    const nextView = nav.view || "home";
+    const nextContext = nav.context || { kind: "unit", unitId: 0, name: "" };
+    const nextSelectedWord = nav.selectedWord || null;
+    const nextUnitScrollTop = Math.max(Number(nav.unitScrollTop) || 0, 0);
+    const nextPageScrollTop = Math.max(Number(nav.pageScrollTop) || 0, 0);
+    setContext(nextContext);
+    setSelectedWord(nextSelectedWord);
+    setView(nextView);
+    if (nextView === "unit") {
+      pendingRestoreScrollTopRef.current = nextUnitScrollTop;
+      pendingRestorePageScrollTopRef.current = nextPageScrollTop;
+      loadUnitWords(nextContext.kind, nextContext.unitId);
+    }
+  }
+
+  function goBack() {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.history.back();
+  }
 
   useEffect(() => {
     if (onRootHomeChange) {
       onRootHomeChange(view === "home");
     }
   }, [view, onRootHomeChange]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    const homeNav = {
+      view: "home",
+      context: { kind: "unit", unitId: 0, name: "" },
+      selectedWord: null,
+      unitScrollTop: 0,
+      pageScrollTop: 0,
+    };
+    const homeState = buildNavState(
+      homeNav.view,
+      homeNav.context,
+      homeNav.selectedWord,
+      homeNav.unitScrollTop,
+      homeNav.pageScrollTop,
+    );
+    window.history.replaceState(homeState, "", window.location.href);
+    window.history.pushState(homeState, "", window.location.href);
+
+    function onPopState(event) {
+      const nav = parseNavState(event.state);
+      if (!nav) {
+        applyNav(homeNav);
+        window.history.pushState(homeState, "", window.location.href);
+        return;
+      }
+      applyNav(nav);
+      if (nav.view === "home") {
+        window.history.pushState(buildNavState("home", homeNav.context, null, 0, 0), "", window.location.href);
+      }
+    }
+
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   function loadUnitWords(kind, unitId) {
     const path = kind === "forgotten"
@@ -1225,18 +1392,50 @@ function MobileReciteRoot({ units, notify, onRootHomeChange }) {
       .finally(() => setLoading(false));
   }
 
+  useEffect(() => {
+    if (view !== "unit" || loading) {
+      return;
+    }
+    if (pendingRestoreScrollTopRef.current === null) {
+      return;
+    }
+    const restoreTop = pendingRestoreScrollTopRef.current;
+    window.requestAnimationFrame(() => {
+      if (!unitScrollRef.current) {
+        return;
+      }
+      unitScrollRef.current.scrollTop = restoreTop;
+      unitScrollTopRef.current = restoreTop;
+      const restorePageTop = Math.max(Number(pendingRestorePageScrollTopRef.current) || 0, 0);
+      if (typeof window !== "undefined") {
+        window.scrollTo(0, restorePageTop);
+      }
+      pageScrollTopRef.current = restorePageTop;
+      pendingRestoreScrollTopRef.current = null;
+      pendingRestorePageScrollTopRef.current = null;
+    });
+  }, [view, loading, words.length]);
+
   function openUnit(unit) {
-    setContext({ kind: "unit", unitId: unit.id, name: unit.name });
+    const nextContext = { kind: "unit", unitId: unit.id, name: unit.name };
+    setContext(nextContext);
     setSelectedWord(null);
     setView("unit");
+    pendingRestoreScrollTopRef.current = 0;
+    pendingRestorePageScrollTopRef.current = 0;
     loadUnitWords("unit", unit.id);
+    pushNavState("unit", nextContext, null, 0, 0);
   }
 
   function openForgotten() {
-    setContext({ kind: "forgotten", unitId: 0, name: "遗忘单词" });
+    const nextContext = { kind: "forgotten", unitId: 0, name: "遗忘单词" };
+    setContext(nextContext);
     setSelectedWord(null);
     setView("unit");
+    pendingRestoreScrollTopRef.current = 0;
+    pendingRestorePageScrollTopRef.current = 0;
     loadUnitWords("forgotten", 0);
+    pushNavState("unit", nextContext, null, 0, 0);
   }
 
   function forgetWord(word) {
@@ -1276,10 +1475,8 @@ function MobileReciteRoot({ units, notify, onRootHomeChange }) {
         fetchPath={fetchPath}
         operationLabel={opLabel}
         onOperation={opAction}
-        onBack={() => {
-          setView("unit");
-          loadUnitWords(context.kind, context.unitId);
-        }}
+        defaultAccent={defaultAccent}
+        onBack={goBack}
       />
     );
   }
@@ -1295,10 +1492,8 @@ function MobileReciteRoot({ units, notify, onRootHomeChange }) {
         fetchPath={fetchPath}
         operationLabel={opLabel}
         onOperation={opAction}
-        onBack={() => {
-          setView("unit");
-          loadUnitWords(context.kind, context.unitId);
-        }}
+        defaultAccent={defaultAccent}
+        onBack={goBack}
       />
     );
   }
@@ -1307,7 +1502,7 @@ function MobileReciteRoot({ units, notify, onRootHomeChange }) {
     return (
       <div className="mobile-page-card">
         <div className="mobile-topbar">
-          <button className="mobile-back-btn" onClick={() => setView("unit")}>{"< 退出"}</button>
+          <button className="mobile-back-btn" onClick={goBack}>{"< 退出"}</button>
           <div />
           <a
             className="desc-op-link"
@@ -1331,35 +1526,48 @@ function MobileReciteRoot({ units, notify, onRootHomeChange }) {
       <>
         <div className="mobile-page-card mobile-unit-page">
           <div className="mobile-topbar mobile-unit-topbar">
-            <button className="mobile-back-btn" onClick={() => setView("home")}>{"< 退出"}</button>
+            <button className="mobile-back-btn" onClick={goBack}>{"< 退出"}</button>
             <h2 className="mobile-page-title">{context.name}</h2>
             <div className="mobile-topbar-placeholder" />
           </div>
 
           {error && <div className="error">{error}</div>}
-          <div className="mobile-unit-scroll">
+          <div
+            className="mobile-unit-scroll"
+            ref={unitScrollRef}
+            onScroll={(e) => {
+              unitScrollTopRef.current = e.currentTarget.scrollTop || 0;
+            }}
+          >
             {loading && <div className="helper-tip">加载中...</div>}
             {!loading && words.length === 0 && <div className="helper-tip">暂无单词</div>}
             {words.map((row, idx) => {
               const meaningRows = formatMeaningLines(row.parts);
               return (
                 <div key={`${row.word}-${idx}`} className="mobile-word-item">
-                  <button
-                    className="mobile-word-open-btn"
-                    onClick={() => {
-                      setSelectedWord(row);
-                      setView("word");
-                    }}
-                  >
-                    {row.word}
-                  </button>
+                  <div className="mobile-word-item-head">
+                    <button
+                      className="mobile-word-open-btn"
+                      onClick={() => {
+                        const scrollTop = currentUnitScrollTop();
+                        const pageScrollTop = currentPageScrollTop();
+                        replaceCurrentNavState("unit", context, null, scrollTop, pageScrollTop);
+                        setSelectedWord(row);
+                        setView("word");
+                        pushNavState("word", context, row, scrollTop, pageScrollTop);
+                      }}
+                    >
+                      {row.word}
+                    </button>
+                    <span className="mobile-word-item-no">#{idx + 1}</span>
+                  </div>
                   <div className="mobile-word-item-pron">
                     <a
                       className="mobile-pron-link"
                       href="#"
                       onClick={(e) => {
                         e.preventDefault();
-                        playAudio(row.en_audio);
+                        playAudio(getEnglishAudio(row));
                       }}
                     >
                       英 [{row.ph_en || "-"}]
@@ -1369,7 +1577,7 @@ function MobileReciteRoot({ units, notify, onRootHomeChange }) {
                       href="#"
                       onClick={(e) => {
                         e.preventDefault();
-                        playAudio(row.am_audio || row.en_audio);
+                        playAudio(getAmericanAudio(row) || getEnglishAudio(row));
                       }}
                     >
                       美 [{row.ph_am || "-"}]
@@ -1386,8 +1594,32 @@ function MobileReciteRoot({ units, notify, onRootHomeChange }) {
           </div>
         </div>
         <nav className="mobile-bottom-nav mobile-unit-nav">
-          <button className="mobile-bottom-btn" onClick={() => setView("quiz_dictation")}>听写</button>
-          <button className="mobile-bottom-btn" onClick={() => setView("quiz_spelling")}>默写</button>
+          <button
+            className="mobile-bottom-btn"
+            onClick={() => {
+              const scrollTop = currentUnitScrollTop();
+              const pageScrollTop = currentPageScrollTop();
+              replaceCurrentNavState("unit", context, null, scrollTop, pageScrollTop);
+              setSelectedWord(null);
+              setView("quiz_dictation");
+              pushNavState("quiz_dictation", context, null, scrollTop, pageScrollTop);
+            }}
+          >
+            听写
+          </button>
+          <button
+            className="mobile-bottom-btn"
+            onClick={() => {
+              const scrollTop = currentUnitScrollTop();
+              const pageScrollTop = currentPageScrollTop();
+              replaceCurrentNavState("unit", context, null, scrollTop, pageScrollTop);
+              setSelectedWord(null);
+              setView("quiz_spelling");
+              pushNavState("quiz_spelling", context, null, scrollTop, pageScrollTop);
+            }}
+          >
+            默写
+          </button>
         </nav>
       </>
     );
@@ -1650,6 +1882,7 @@ function App() {
   const [globalError, setGlobalError] = useState("");
   const [toast, setToast] = useState({ visible: false, text: "", ts: 0 });
   const [showMobileRootNav, setShowMobileRootNav] = useState(true);
+  const [defaultAccent, setDefaultAccent] = useState("en");
 
   function notify(text) {
     setToast({ visible: true, text, ts: Date.now() });
@@ -1690,6 +1923,17 @@ function App() {
 
   useEffect(() => {
     loadUnits();
+  }, []);
+
+  useEffect(() => {
+    api("/api/recite/config")
+      .then((data) => {
+        const accent = data && data.config && data.config.default_accent === "am" ? "am" : "en";
+        setDefaultAccent(accent);
+      })
+      .catch(() => {
+        setDefaultAccent("en");
+      });
   }, []);
 
   const filteredUnits = useMemo(() => {
@@ -1778,6 +2022,7 @@ function App() {
               units={units}
               notify={notify}
               onRootHomeChange={setShowMobileRootNav}
+              defaultAccent={defaultAccent}
             />
           )}
           {mode === "todo" && <MobileTodoPanel />}
@@ -1853,7 +2098,7 @@ function App() {
           {mode === "todo" && <TodoPanel />}
 
           {mode === "recite" && selectedReciteType === "forgotten" && (
-            <ForgottenPanel notify={notify} />
+            <ForgottenPanel notify={notify} defaultAccent={defaultAccent} />
           )}
 
           {mode === "recite" && selectedReciteType === "unit" && !selectedUnit && (
@@ -1864,7 +2109,12 @@ function App() {
           )}
 
           {mode === "recite" && selectedReciteType === "unit" && selectedUnit && (
-            <ReciteUnitPanel key={selectedUnit.id} unit={selectedUnit} notify={notify} />
+            <ReciteUnitPanel
+              key={selectedUnit.id}
+              unit={selectedUnit}
+              notify={notify}
+              defaultAccent={defaultAccent}
+            />
           )}
         </main>
       </div>

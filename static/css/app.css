@@ -617,10 +617,24 @@ a:hover {
 }
 
 .mobile-word-item {
+  position: relative;
   border-bottom: 1px solid #cbd5e1;
   background: transparent;
   text-align: left;
-  padding: 8px 0 10px;
+  padding: 8px 44px 10px 0;
+}
+
+.mobile-word-item-head {
+  display: block;
+}
+
+.mobile-word-item-no {
+  position: absolute;
+  top: 10px;
+  right: 0;
+  font-size: 13px;
+  color: #94a3b8;
+  line-height: 1;
 }
 
 .mobile-word-open-btn {

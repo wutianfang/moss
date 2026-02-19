@@ -19,7 +19,14 @@ func registerRoutes(e *echo.Echo, cfg *conf.Config, db *sql.DB) {
 	unitWordRepo := repository.NewUnitWordRepository(db)
 	forgottenRepo := repository.NewForgottenWordRepository(db)
 	wordFetcher := fetcher.NewIcibaFetcher(cfg.Storage.WordMP3Dir)
-	reciteService := recite.NewService(wordRepo, unitRepo, unitWordRepo, forgottenRepo, wordFetcher)
+	reciteService := recite.NewService(
+		wordRepo,
+		unitRepo,
+		unitWordRepo,
+		forgottenRepo,
+		wordFetcher,
+		cfg.Recite.DefaultAccent,
+	)
 
 	e.Static("/static", "static")
 	e.Static("/word_mp3", cfg.Storage.WordMP3Dir)
@@ -31,6 +38,7 @@ func registerRoutes(e *echo.Echo, cfg *conf.Config, db *sql.DB) {
 	api.GET("/todo/placeholder", todohandler.Placeholder)
 
 	reciteGroup := api.Group("/recite")
+	reciteGroup.GET("/config", recitehandler.GetClientConfig(reciteService))
 	reciteGroup.GET("/units", recitehandler.ListUnits(reciteService))
 	reciteGroup.POST("/units", recitehandler.CreateUnit(reciteService))
 	reciteGroup.PUT("/units/:unitId/name", recitehandler.RenameUnit(reciteService))

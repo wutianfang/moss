@@ -1245,8 +1245,23 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
   const pageScrollTopRef = useRef(0);
   const pendingRestoreScrollTopRef = useRef(null);
   const pendingRestorePageScrollTopRef = useRef(null);
+  const viewRef = useRef("home");
+  const contextKeyRef = useRef("unit:0");
+  const loadedContextKeyRef = useRef("");
 
-  function buildNavState(nextView, nextContext, nextSelectedWord, nextUnitScrollTop, nextPageScrollTop) {
+  function buildContextKey(nextContext) {
+    const safeContext = nextContext || { kind: "unit", unitId: 0 };
+    return `${safeContext.kind || "unit"}:${Number(safeContext.unitId) || 0}`;
+  }
+
+  function buildNavState(
+    nextView,
+    nextContext,
+    nextSelectedWord,
+    nextUnitScrollTop,
+    nextPageScrollTop,
+    nextSkipUnitReload,
+  ) {
     return {
       __moss_mobile_recite_nav: true,
       view: nextView,
@@ -1256,6 +1271,7 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
       selected_word: nextSelectedWord || null,
       unit_scroll_top: typeof nextUnitScrollTop === "number" ? Math.max(nextUnitScrollTop, 0) : 0,
       page_scroll_top: typeof nextPageScrollTop === "number" ? Math.max(nextPageScrollTop, 0) : 0,
+      skip_unit_reload: !!nextSkipUnitReload,
     };
   }
 
@@ -1274,26 +1290,55 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
       selectedWord: state.selected_word || null,
       unitScrollTop: Math.max(Number(state.unit_scroll_top) || 0, 0),
       pageScrollTop: Math.max(Number(state.page_scroll_top) || 0, 0),
+      skipUnitReload: !!state.skip_unit_reload,
     };
   }
 
-  function pushNavState(nextView, nextContext, nextSelectedWord, nextUnitScrollTop, nextPageScrollTop) {
+  function pushNavState(
+    nextView,
+    nextContext,
+    nextSelectedWord,
+    nextUnitScrollTop,
+    nextPageScrollTop,
+    nextSkipUnitReload,
+  ) {
     if (typeof window === "undefined") {
       return;
     }
     window.history.pushState(
-      buildNavState(nextView, nextContext, nextSelectedWord, nextUnitScrollTop, nextPageScrollTop),
+      buildNavState(
+        nextView,
+        nextContext,
+        nextSelectedWord,
+        nextUnitScrollTop,
+        nextPageScrollTop,
+        nextSkipUnitReload,
+      ),
       "",
       window.location.href,
     );
   }
 
-  function replaceCurrentNavState(nextView, nextContext, nextSelectedWord, nextUnitScrollTop, nextPageScrollTop) {
+  function replaceCurrentNavState(
+    nextView,
+    nextContext,
+    nextSelectedWord,
+    nextUnitScrollTop,
+    nextPageScrollTop,
+    nextSkipUnitReload,
+  ) {
     if (typeof window === "undefined") {
       return;
     }
     window.history.replaceState(
-      buildNavState(nextView, nextContext, nextSelectedWord, nextUnitScrollTop, nextPageScrollTop),
+      buildNavState(
+        nextView,
+        nextContext,
+        nextSelectedWord,
+        nextUnitScrollTop,
+        nextPageScrollTop,
+        nextSkipUnitReload,
+      ),
       "",
       window.location.href,
     );
@@ -1319,13 +1364,24 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
     const nextSelectedWord = nav.selectedWord || null;
     const nextUnitScrollTop = Math.max(Number(nav.unitScrollTop) || 0, 0);
     const nextPageScrollTop = Math.max(Number(nav.pageScrollTop) || 0, 0);
+    const nextContextKey = buildContextKey(nextContext);
+    const shouldSkipReload = Boolean(
+      nav.skipUnitReload
+      && viewRef.current === "word"
+      && contextKeyRef.current === nextContextKey
+      && loadedContextKeyRef.current === nextContextKey,
+    );
     setContext(nextContext);
     setSelectedWord(nextSelectedWord);
     setView(nextView);
     if (nextView === "unit") {
       pendingRestoreScrollTopRef.current = nextUnitScrollTop;
       pendingRestorePageScrollTopRef.current = nextPageScrollTop;
-      loadUnitWords(nextContext.kind, nextContext.unitId);
+      if (shouldSkipReload) {
+        setLoading(false);
+      } else {
+        loadUnitWords(nextContext.kind, nextContext.unitId, { clearBeforeLoad: true });
+      }
     }
   }
 
@@ -1341,6 +1397,11 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
       onRootHomeChange(view === "home");
     }
   }, [view, onRootHomeChange]);
+
+  useEffect(() => {
+    viewRef.current = view;
+    contextKeyRef.current = buildContextKey(context);
+  }, [view, context.kind, context.unitId]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1359,6 +1420,7 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
       homeNav.selectedWord,
       homeNav.unitScrollTop,
       homeNav.pageScrollTop,
+      false,
     );
     window.history.replaceState(homeState, "", window.location.href);
     window.history.pushState(homeState, "", window.location.href);
@@ -1372,7 +1434,7 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
       }
       applyNav(nav);
       if (nav.view === "home") {
-        window.history.pushState(buildNavState("home", homeNav.context, null, 0, 0), "", window.location.href);
+        window.history.pushState(buildNavState("home", homeNav.context, null, 0, 0, false), "", window.location.href);
       }
     }
 
@@ -1380,14 +1442,21 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
-  function loadUnitWords(kind, unitId) {
+  function loadUnitWords(kind, unitId, options = {}) {
+    const clearBeforeLoad = options.clearBeforeLoad !== false;
     const path = kind === "forgotten"
       ? "/api/recite/forgotten/words"
       : `/api/recite/units/${unitId}/words`;
+    if (clearBeforeLoad) {
+      setWords([]);
+    }
     setLoading(true);
     setError("");
     return api(path)
-      .then((data) => setWords(data.words || []))
+      .then((data) => {
+        setWords(data.words || []);
+        loadedContextKeyRef.current = buildContextKey({ kind, unitId });
+      })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }
@@ -1423,8 +1492,8 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
     setView("unit");
     pendingRestoreScrollTopRef.current = 0;
     pendingRestorePageScrollTopRef.current = 0;
-    loadUnitWords("unit", unit.id);
-    pushNavState("unit", nextContext, null, 0, 0);
+    loadUnitWords("unit", unit.id, { clearBeforeLoad: true });
+    pushNavState("unit", nextContext, null, 0, 0, false);
   }
 
   function openForgotten() {
@@ -1434,8 +1503,8 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
     setView("unit");
     pendingRestoreScrollTopRef.current = 0;
     pendingRestorePageScrollTopRef.current = 0;
-    loadUnitWords("forgotten", 0);
-    pushNavState("unit", nextContext, null, 0, 0);
+    loadUnitWords("forgotten", 0, { clearBeforeLoad: true });
+    pushNavState("unit", nextContext, null, 0, 0, false);
   }
 
   function forgetWord(word) {
@@ -1551,10 +1620,10 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
                       onClick={() => {
                         const scrollTop = currentUnitScrollTop();
                         const pageScrollTop = currentPageScrollTop();
-                        replaceCurrentNavState("unit", context, null, scrollTop, pageScrollTop);
+                        replaceCurrentNavState("unit", context, null, scrollTop, pageScrollTop, true);
                         setSelectedWord(row);
                         setView("word");
-                        pushNavState("word", context, row, scrollTop, pageScrollTop);
+                        pushNavState("word", context, row, scrollTop, pageScrollTop, false);
                       }}
                     >
                       {row.word}
@@ -1599,10 +1668,10 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
             onClick={() => {
               const scrollTop = currentUnitScrollTop();
               const pageScrollTop = currentPageScrollTop();
-              replaceCurrentNavState("unit", context, null, scrollTop, pageScrollTop);
+              replaceCurrentNavState("unit", context, null, scrollTop, pageScrollTop, false);
               setSelectedWord(null);
               setView("quiz_dictation");
-              pushNavState("quiz_dictation", context, null, scrollTop, pageScrollTop);
+              pushNavState("quiz_dictation", context, null, scrollTop, pageScrollTop, false);
             }}
           >
             听写
@@ -1612,10 +1681,10 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
             onClick={() => {
               const scrollTop = currentUnitScrollTop();
               const pageScrollTop = currentPageScrollTop();
-              replaceCurrentNavState("unit", context, null, scrollTop, pageScrollTop);
+              replaceCurrentNavState("unit", context, null, scrollTop, pageScrollTop, false);
               setSelectedWord(null);
               setView("quiz_spelling");
-              pushNavState("quiz_spelling", context, null, scrollTop, pageScrollTop);
+              pushNavState("quiz_spelling", context, null, scrollTop, pageScrollTop, false);
             }}
           >
             默写

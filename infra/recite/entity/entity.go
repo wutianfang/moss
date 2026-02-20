@@ -38,11 +38,12 @@ type Word struct {
 }
 
 type ReciteUnit struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	SortOrder int64     `json:"sort_order"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         int64      `json:"id"`
+	Name       string     `json:"name"`
+	ReciteDate *time.Time `json:"recite_date"`
+	SortOrder  int64      `json:"sort_order"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
 }
 
 type UnitWordRelation struct {

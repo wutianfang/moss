@@ -80,6 +80,22 @@ function getDefaultAudio(row, accent) {
   return en || am;
 }
 
+function formatReciteDateText(rawDate) {
+  const text = (rawDate || "").trim();
+  if (!text) {
+    return "-";
+  }
+  return text;
+}
+
+function buildReviewQuery(date) {
+  const text = (date || "").trim();
+  if (!text) {
+    return "";
+  }
+  return `?date=${encodeURIComponent(text)}`;
+}
+
 function formatMeaningLines(parts, limit = 0) {
   const rows = (parts || []).map((part) => {
     const means = Array.isArray(part.means) ? part.means.join("；") : "";
@@ -819,68 +835,74 @@ function ReciteUnitPanel({ unit, notify, defaultAccent }) {
         </div>
       </div>
 
-      <section>
-        <div className="unit-actions">
-          <input
-            className="input"
-            placeholder="输入要查询的单词"
-            value={wordInput}
-            onChange={(e) => setWordInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                doQueryWord();
-              }
-            }}
-          />
-          <button className="btn" onClick={doQueryWord}>查询</button>
-        </div>
-        {queryWord && (
-          <div>
-            <div className="desc-header">
-              <div className="small-title">发音</div>
-              <div className="desc-right-tools">
-                {queryWord.mean_tag && <span className="desc-tag">{queryWord.mean_tag}</span>}
-              </div>
-            </div>
-            <div className="yinbiao-inline">
-              <span>英音：[{queryWord.ph_en || "-"}]</span>
-              <a
-                className="play-icon-link"
-                href="#"
-                onMouseEnter={() => playAudio(queryWord.en_audio_url)}
-                onClick={(e) => {
-                  e.preventDefault();
-                  playAudio(queryWord.en_audio_url);
-                }}
-              >
-                {"\u25B6"}
-              </a>
-              <span className="yinbiao-gap">美音：[{queryWord.ph_am || "-"}]</span>
-              <a
-                className="play-icon-link"
-                href="#"
-                onMouseEnter={() => playAudio(queryWord.am_audio_url || queryWord.en_audio_url)}
-                onClick={(e) => {
-                  e.preventDefault();
-                  playAudio(queryWord.am_audio_url || queryWord.en_audio_url);
-                }}
-              >
-                {"\u25B6"}
-              </a>
-            </div>
-            <div className="section-divider" />
-            <PartAndSentence
-              row={{
-                word: queryWord.word,
-                parts: queryWord.parts,
-                sentence_groups: queryWord.sentence_groups,
+      <div className="unit-top-grid">
+        <section className="unit-search-section">
+          <div className="unit-actions">
+            <input
+              className="input"
+              placeholder="输入要查询的单词"
+              value={wordInput}
+              onChange={(e) => setWordInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  doQueryWord();
+                }
               }}
-              playAudio={playAudio}
             />
-            <button className="btn brand" onClick={addWordToUnit}>添加到单元</button>
+            <button className="btn" onClick={doQueryWord}>查询</button>
           </div>
-        )}
-      </section>
+          {queryWord && (
+            <div>
+              <div className="desc-header">
+                <div className="small-title">发音</div>
+                <div className="desc-right-tools">
+                  {queryWord.mean_tag && <span className="desc-tag">{queryWord.mean_tag}</span>}
+                </div>
+              </div>
+              <div className="yinbiao-inline">
+                <span>英音：[{queryWord.ph_en || "-"}]</span>
+                <a
+                  className="play-icon-link"
+                  href="#"
+                  onMouseEnter={() => playAudio(queryWord.en_audio_url)}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    playAudio(queryWord.en_audio_url);
+                  }}
+                >
+                  {"\u25B6"}
+                </a>
+                <span className="yinbiao-gap">美音：[{queryWord.ph_am || "-"}]</span>
+                <a
+                  className="play-icon-link"
+                  href="#"
+                  onMouseEnter={() => playAudio(queryWord.am_audio_url || queryWord.en_audio_url)}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    playAudio(queryWord.am_audio_url || queryWord.en_audio_url);
+                  }}
+                >
+                  {"\u25B6"}
+                </a>
+              </div>
+              <div className="section-divider" />
+              <PartAndSentence
+                row={{
+                  word: queryWord.word,
+                  parts: queryWord.parts,
+                  sentence_groups: queryWord.sentence_groups,
+                }}
+                playAudio={playAudio}
+              />
+              <button className="btn brand" onClick={addWordToUnit}>添加到单元</button>
+            </div>
+          )}
+        </section>
+        <div className="unit-info-box">
+          <div>背诵时间：{formatReciteDateText(unit.recite_date)}</div>
+          <div>共{wordRows.length}个单词</div>
+        </div>
+      </div>
 
       {error && <div className="error">{error}</div>}
 
@@ -966,6 +988,11 @@ function ForgottenPanel({ notify, defaultAccent }) {
           <button className="btn secondary" onClick={() => setView("spelling")}>默写单词</button>
         </div>
       </div>
+      <div className="unit-info-row">
+        <div className="unit-info-box">
+          <div>共{wordRows.length}个单词</div>
+        </div>
+      </div>
 
       {error && <div className="error">{error}</div>}
       {wordRows.length === 0 ? (
@@ -976,6 +1003,123 @@ function ForgottenPanel({ notify, defaultAccent }) {
           playAudio={playAudio}
           operationLabel="记住"
           onOperation={(word) => rememberWord(word).catch((err) => setError(err.message))}
+        />
+      )}
+    </div>
+  );
+}
+
+function ReviewPanel({
+  notify,
+  defaultAccent,
+  reviewDates,
+  selectedReviewDate,
+  onReviewDateChange,
+}) {
+  const playAudio = useAudioPlayer();
+  const [view, setView] = useState("detail");
+  const [wordRows, setWordRows] = useState([]);
+  const [reviewUnits, setReviewUnits] = useState([]);
+  const [loadingWords, setLoadingWords] = useState(true);
+  const [error, setError] = useState("");
+  const query = buildReviewQuery(selectedReviewDate);
+
+  function loadWords() {
+    setLoadingWords(true);
+    setError("");
+    return api(`/api/recite/review/words${query}`)
+      .then((data) => {
+        setWordRows(data.words || []);
+        setReviewUnits(data.units || []);
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setLoadingWords(false));
+  }
+
+  useEffect(() => {
+    setView("detail");
+    setWordRows([]);
+    setReviewUnits([]);
+    loadWords();
+  }, [query]);
+
+  function forgetWord(word) {
+    return api("/api/recite/forgotten/words", {
+      method: "POST",
+      body: { word },
+    }).then(() => {
+      if (notify) {
+        notify("已添加到遗忘单词本");
+      }
+    });
+  }
+
+  if (view === "dictation") {
+    return (
+      <DictationPanel
+        title="听写单词（今日复习）"
+        fetchPath={`/api/recite/review/dictation${query}`}
+        operationLabel="忘记"
+        onOperation={forgetWord}
+        removeOnOperationSuccess={false}
+        defaultAccent={defaultAccent}
+        onBack={() => setView("detail")}
+      />
+    );
+  }
+  if (view === "spelling") {
+    return (
+      <SpellingPanel
+        title="默写单词（今日复习）"
+        fetchPath={`/api/recite/review/dictation${query}`}
+        operationLabel="忘记"
+        onOperation={forgetWord}
+        removeOnOperationSuccess={false}
+        onBack={() => setView("detail")}
+      />
+    );
+  }
+
+  return (
+    <div className="right-panel-inner">
+      <div className="panel-header-row">
+        <h2>今日复习</h2>
+        <div className="unit-actions">
+          <select
+            className="input review-date-select"
+            value={selectedReviewDate || ""}
+            onChange={(e) => onReviewDateChange(e.target.value)}
+          >
+            {(reviewDates || []).map((date) => (
+              <option key={date} value={date}>{date}</option>
+            ))}
+          </select>
+          <button className="btn secondary" onClick={() => setView("dictation")}>听写单词</button>
+          <button className="btn secondary" onClick={() => setView("spelling")}>默写单词</button>
+        </div>
+      </div>
+      <div className="unit-info-row">
+        <div className="unit-info-box">
+          <div>共{wordRows.length}个单词，包含：</div>
+          {reviewUnits.length === 0 ? (
+            <div>-</div>
+          ) : reviewUnits.map((item) => (
+            <div key={item.unit_id}>
+              {item.name},共{item.word_count}个单词，记忆时间 {formatReciteDateText(item.recite_date)}，距离今天{item.distance_days}天
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {error && <div className="error">{error}</div>}
+      {loadingWords && <p className="helper-tip">加载中...</p>}
+      {!loadingWords && wordRows.length === 0 && <p className="helper-tip">当天暂无需要复习的单词。</p>}
+      {!loadingWords && wordRows.length > 0 && (
+        <WordTable
+          rows={wordRows}
+          playAudio={playAudio}
+          operationLabel="忘记"
+          onOperation={(word) => forgetWord(word).catch((err) => setError(err.message))}
         />
       )}
     </div>
@@ -1232,14 +1376,30 @@ function MobileQuizPanel({
   );
 }
 
-function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
+function MobileReciteRoot({
+  units,
+  notify,
+  onRootHomeChange,
+  defaultAccent,
+  reviewDates,
+  selectedReviewDate,
+  onReviewDateChange,
+}) {
   const playAudio = useAudioPlayer();
   const [view, setView] = useState("home");
-  const [context, setContext] = useState({ kind: "unit", unitId: 0, name: "" });
+  const [context, setContext] = useState({
+    kind: "unit",
+    unitId: 0,
+    name: "",
+    reciteDate: "",
+    reviewDate: selectedReviewDate || "",
+  });
   const [words, setWords] = useState([]);
+  const [reviewUnits, setReviewUnits] = useState([]);
   const [selectedWord, setSelectedWord] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [unitMetaExpanded, setUnitMetaExpanded] = useState(false);
   const unitScrollRef = useRef(null);
   const unitScrollTopRef = useRef(0);
   const pageScrollTopRef = useRef(0);
@@ -1251,7 +1411,8 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
 
   function buildContextKey(nextContext) {
     const safeContext = nextContext || { kind: "unit", unitId: 0 };
-    return `${safeContext.kind || "unit"}:${Number(safeContext.unitId) || 0}`;
+    const reviewDate = safeContext.reviewDate || "";
+    return `${safeContext.kind || "unit"}:${Number(safeContext.unitId) || 0}:${reviewDate}`;
   }
 
   function buildNavState(
@@ -1268,6 +1429,8 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
       context_kind: nextContext.kind,
       context_unit_id: nextContext.unitId,
       context_name: nextContext.name,
+      context_recite_date: nextContext.reciteDate || "",
+      context_review_date: nextContext.reviewDate || "",
       selected_word: nextSelectedWord || null,
       unit_scroll_top: typeof nextUnitScrollTop === "number" ? Math.max(nextUnitScrollTop, 0) : 0,
       page_scroll_top: typeof nextPageScrollTop === "number" ? Math.max(nextPageScrollTop, 0) : 0,
@@ -1280,9 +1443,13 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
       return null;
     }
     const nextContext = {
-      kind: state.context_kind === "forgotten" ? "forgotten" : "unit",
+      kind: state.context_kind === "forgotten"
+        ? "forgotten"
+        : (state.context_kind === "review" ? "review" : "unit"),
       unitId: Number(state.context_unit_id) || 0,
       name: state.context_name || "",
+      reciteDate: state.context_recite_date || "",
+      reviewDate: state.context_review_date || "",
     };
     return {
       view: state.view || "home",
@@ -1360,7 +1527,7 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
 
   function applyNav(nav) {
     const nextView = nav.view || "home";
-    const nextContext = nav.context || { kind: "unit", unitId: 0, name: "" };
+    const nextContext = nav.context || { kind: "unit", unitId: 0, name: "", reciteDate: "", reviewDate: "" };
     const nextSelectedWord = nav.selectedWord || null;
     const nextUnitScrollTop = Math.max(Number(nav.unitScrollTop) || 0, 0);
     const nextPageScrollTop = Math.max(Number(nav.pageScrollTop) || 0, 0);
@@ -1380,7 +1547,10 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
       if (shouldSkipReload) {
         setLoading(false);
       } else {
-        loadUnitWords(nextContext.kind, nextContext.unitId, { clearBeforeLoad: true });
+        loadUnitWords(nextContext.kind, nextContext.unitId, {
+          clearBeforeLoad: true,
+          reviewDate: nextContext.reviewDate,
+        });
       }
     }
   }
@@ -1401,7 +1571,13 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
   useEffect(() => {
     viewRef.current = view;
     contextKeyRef.current = buildContextKey(context);
-  }, [view, context.kind, context.unitId]);
+  }, [view, context.kind, context.unitId, context.reviewDate]);
+
+  useEffect(() => {
+    if (view === "unit") {
+      setUnitMetaExpanded(false);
+    }
+  }, [view, context.kind, context.unitId, context.reviewDate]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1409,7 +1585,7 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
     }
     const homeNav = {
       view: "home",
-      context: { kind: "unit", unitId: 0, name: "" },
+      context: { kind: "unit", unitId: 0, name: "", reciteDate: "", reviewDate: "" },
       selectedWord: null,
       unitScrollTop: 0,
       pageScrollTop: 0,
@@ -1444,9 +1620,13 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
 
   function loadUnitWords(kind, unitId, options = {}) {
     const clearBeforeLoad = options.clearBeforeLoad !== false;
-    const path = kind === "forgotten"
-      ? "/api/recite/forgotten/words"
-      : `/api/recite/units/${unitId}/words`;
+    const reviewQuery = buildReviewQuery(options.reviewDate);
+    let path = `/api/recite/units/${unitId}/words`;
+    if (kind === "forgotten") {
+      path = "/api/recite/forgotten/words";
+    } else if (kind === "review") {
+      path = `/api/recite/review/words${reviewQuery}`;
+    }
     if (clearBeforeLoad) {
       setWords([]);
     }
@@ -1455,7 +1635,12 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
     return api(path)
       .then((data) => {
         setWords(data.words || []);
-        loadedContextKeyRef.current = buildContextKey({ kind, unitId });
+        if (kind === "review") {
+          setReviewUnits(data.units || []);
+        } else {
+          setReviewUnits([]);
+        }
+        loadedContextKeyRef.current = buildContextKey({ kind, unitId, reviewDate: options.reviewDate || "" });
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -1486,24 +1671,45 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
   }, [view, loading, words.length]);
 
   function openUnit(unit) {
-    const nextContext = { kind: "unit", unitId: unit.id, name: unit.name };
+    const nextContext = {
+      kind: "unit",
+      unitId: unit.id,
+      name: unit.name,
+      reciteDate: unit.recite_date || "",
+      reviewDate: "",
+    };
     setContext(nextContext);
     setSelectedWord(null);
     setView("unit");
     pendingRestoreScrollTopRef.current = 0;
     pendingRestorePageScrollTopRef.current = 0;
-    loadUnitWords("unit", unit.id, { clearBeforeLoad: true });
+    loadUnitWords("unit", unit.id, { clearBeforeLoad: true, reviewDate: "" });
     pushNavState("unit", nextContext, null, 0, 0, false);
   }
 
   function openForgotten() {
-    const nextContext = { kind: "forgotten", unitId: 0, name: "遗忘单词" };
+    const nextContext = { kind: "forgotten", unitId: 0, name: "遗忘单词", reciteDate: "", reviewDate: "" };
     setContext(nextContext);
     setSelectedWord(null);
     setView("unit");
     pendingRestoreScrollTopRef.current = 0;
     pendingRestorePageScrollTopRef.current = 0;
-    loadUnitWords("forgotten", 0, { clearBeforeLoad: true });
+    loadUnitWords("forgotten", 0, { clearBeforeLoad: true, reviewDate: "" });
+    pushNavState("unit", nextContext, null, 0, 0, false);
+  }
+
+  function openReview() {
+    const date = selectedReviewDate || ((reviewDates && reviewDates[0]) || "");
+    if (onReviewDateChange && date && date !== selectedReviewDate) {
+      onReviewDateChange(date);
+    }
+    const nextContext = { kind: "review", unitId: 0, name: "今日复习", reciteDate: "", reviewDate: date };
+    setContext(nextContext);
+    setSelectedWord(null);
+    setView("unit");
+    pendingRestoreScrollTopRef.current = 0;
+    pendingRestorePageScrollTopRef.current = 0;
+    loadUnitWords("review", 0, { clearBeforeLoad: true, reviewDate: date });
     pushNavState("unit", nextContext, null, 0, 0, false);
   }
 
@@ -1530,13 +1736,33 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
     });
   }
 
+  function changeReviewDate(nextDate) {
+    const date = (nextDate || "").trim();
+    if (!date) {
+      return;
+    }
+    if (onReviewDateChange) {
+      onReviewDateChange(date);
+    }
+    const nextContext = { ...context, kind: "review", name: "今日复习", reviewDate: date, reciteDate: "" };
+    setContext(nextContext);
+    setSelectedWord(null);
+    pendingRestoreScrollTopRef.current = 0;
+    pendingRestorePageScrollTopRef.current = 0;
+    loadUnitWords("review", 0, { clearBeforeLoad: true, reviewDate: date });
+    replaceCurrentNavState("unit", nextContext, null, 0, 0, false);
+  }
+
   const opLabel = context.kind === "forgotten" ? "记住" : "忘记";
   const opAction = context.kind === "forgotten" ? rememberWord : forgetWord;
+  const topMetaCountText = `共${words.length}个单词`;
 
   if (view === "quiz_dictation") {
     const fetchPath = context.kind === "forgotten"
       ? "/api/recite/forgotten/dictation"
-      : `/api/recite/units/${context.unitId}/dictation`;
+      : (context.kind === "review"
+        ? `/api/recite/review/dictation${buildReviewQuery(context.reviewDate)}`
+        : `/api/recite/units/${context.unitId}/dictation`);
     return (
       <MobileQuizPanel
         title={`${context.name} 听写`}
@@ -1553,7 +1779,9 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
   if (view === "quiz_spelling") {
     const fetchPath = context.kind === "forgotten"
       ? "/api/recite/forgotten/dictation"
-      : `/api/recite/units/${context.unitId}/dictation`;
+      : (context.kind === "review"
+        ? `/api/recite/review/dictation${buildReviewQuery(context.reviewDate)}`
+        : `/api/recite/units/${context.unitId}/dictation`);
     return (
       <MobileQuizPanel
         title={`${context.name} 默写`}
@@ -1597,7 +1825,47 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
           <div className="mobile-topbar mobile-unit-topbar">
             <button className="mobile-back-btn" onClick={goBack}>{"< 退出"}</button>
             <h2 className="mobile-page-title">{context.name}</h2>
-            <div className="mobile-topbar-placeholder" />
+            <div className="mobile-unit-meta">
+              <button
+                className="mobile-unit-meta-toggle"
+                onClick={() => setUnitMetaExpanded((v) => !v)}
+              >
+                <span>{topMetaCountText}</span>
+                <span className="mobile-unit-meta-arrow">{unitMetaExpanded ? "\u25B2" : "\u25BC"}</span>
+              </button>
+              {unitMetaExpanded && (
+                <div className="mobile-unit-meta-detail">
+                  {context.kind === "review" && (
+                    <select
+                      className="input mobile-review-date-select"
+                      value={context.reviewDate || selectedReviewDate || ""}
+                      onChange={(e) => changeReviewDate(e.target.value)}
+                    >
+                      {(reviewDates || []).map((date) => (
+                        <option key={date} value={date}>{date}</option>
+                      ))}
+                    </select>
+                  )}
+                  {context.kind === "unit" && (
+                    <div>背诵时间：{formatReciteDateText(context.reciteDate)}</div>
+                  )}
+                  {context.kind === "review" ? (
+                    <>
+                      <div>共{words.length}个单词，包含：</div>
+                      {reviewUnits.length === 0 ? (
+                        <div>-</div>
+                      ) : reviewUnits.map((item) => (
+                        <div key={item.unit_id}>
+                          {item.name},共{item.word_count}个单词，记忆时间 {formatReciteDateText(item.recite_date)}，距离今天{item.distance_days}天
+                        </div>
+                      ))}
+                    </>
+                  ) : (
+                    <div>{topMetaCountText}</div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           {error && <div className="error">{error}</div>}
@@ -1701,6 +1969,9 @@ function MobileReciteRoot({ units, notify, onRootHomeChange, defaultAccent }) {
         <li>
           <button className="mobile-home-item" onClick={openForgotten}>遗忘单词</button>
         </li>
+        <li>
+          <button className="mobile-home-item" onClick={openReview}>今日复习</button>
+        </li>
         {units.map((unit) => (
           <li key={unit.id}>
             <button className="mobile-home-item" onClick={() => openUnit(unit)}>{unit.name}</button>
@@ -1734,16 +2005,21 @@ function SidebarRecite({
   selectedUnitId,
   onSelectUnit,
   onSelectForgotten,
+  onSelectReview,
   onCreateUnit,
   onRenameUnit,
+  onDeleteUnit,
   onReorderUnits,
   searchKeyword,
   onSearchKeywordChange,
   createName,
   onCreateNameChange,
+  createReciteDate,
+  onCreateReciteDateChange,
 }) {
   const [editingUnitId, setEditingUnitId] = useState(0);
   const [editingName, setEditingName] = useState("");
+  const [editingReciteDate, setEditingReciteDate] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [draggingUnitId, setDraggingUnitId] = useState(0);
   const [dropUnitId, setDropUnitId] = useState(0);
@@ -1754,14 +2030,34 @@ function SidebarRecite({
     setError("");
     setEditingUnitId(unit.id);
     setEditingName(unit.name);
+    setEditingReciteDate(unit.recite_date || "");
   }
 
   function saveEdit(unitId) {
     setError("");
-    onRenameUnit(unitId, editingName)
+    onRenameUnit(unitId, editingName, editingReciteDate)
       .then(() => {
         setEditingUnitId(0);
         setEditingName("");
+        setEditingReciteDate("");
+      })
+      .catch((err) => setError(err.message));
+  }
+
+  function removeUnit(unit) {
+    if (!onDeleteUnit) {
+      return;
+    }
+    const label = (unit && unit.name) ? unit.name : "该单元";
+    if (!window.confirm(`确认删除单元「${label}」吗？`)) {
+      return;
+    }
+    setError("");
+    onDeleteUnit(unit.id)
+      .then(() => {
+        setEditingUnitId(0);
+        setEditingName("");
+        setEditingReciteDate("");
       })
       .catch((err) => setError(err.message));
   }
@@ -1826,6 +2122,12 @@ function SidebarRecite({
                 }
               }}
             />
+            <input
+              className="input side-date-input"
+              type="date"
+              value={createReciteDate || ""}
+              onChange={(e) => onCreateReciteDateChange(e.target.value)}
+            />
             <button className="btn" onClick={submitCreate}>添加</button>
           </div>
         )}
@@ -1847,6 +2149,16 @@ function SidebarRecite({
               onClick={onSelectForgotten}
             >
               遗忘单词
+            </button>
+          </div>
+        </li>
+        <li className="unit-row-wrap">
+          <div className="unit-item-row">
+            <button
+              className={`unit-item unit-main-btn ${selectedType === "review" ? "active" : ""}`}
+              onClick={onSelectReview}
+            >
+              今日复习
             </button>
           </div>
         </li>
@@ -1887,15 +2199,16 @@ function SidebarRecite({
               setDropUnitId(0);
             }}
           >
-            <div className="unit-item-row">
+            <div className="unit-item-wrap">
               <button
                 className={`unit-item unit-main-btn ${selectedType === "unit" && selectedUnitId === unit.id ? "active" : ""}`}
                 onClick={() => onSelectUnit(unit.id)}
               >
-                {unit.name}
+                <span className="unit-item-title">{unit.name}</span>
+                <span className="unit-item-date">{unit.recite_date || "-"}</span>
               </button>
               <button
-                className="icon-btn"
+                className="unit-edit-float-btn"
                 title="编辑单元名"
                 onClick={(e) => {
                   e.preventDefault();
@@ -1918,8 +2231,25 @@ function SidebarRecite({
                     }
                   }}
                 />
+                <input
+                  className="input side-date-input"
+                  type="date"
+                  value={editingReciteDate}
+                  onChange={(e) => setEditingReciteDate(e.target.value)}
+                />
                 <button className="btn" onClick={() => saveEdit(unit.id)}>保存</button>
-                <button className="btn secondary" onClick={() => setEditingUnitId(0)}>取消</button>
+                <button
+                  className="btn secondary"
+                  onClick={() => {
+                    setEditingUnitId(0);
+                    setEditingReciteDate("");
+                  }}
+                >
+                  取消
+                </button>
+                <button className="btn danger" onClick={() => removeUnit(unit)}>
+                  删除
+                </button>
               </div>
             )}
           </li>
@@ -1948,10 +2278,13 @@ function App() {
   const [selectedUnitId, setSelectedUnitId] = useState(0);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [createName, setCreateName] = useState("");
+  const [createReciteDate, setCreateReciteDate] = useState("");
   const [globalError, setGlobalError] = useState("");
   const [toast, setToast] = useState({ visible: false, text: "", ts: 0 });
   const [showMobileRootNav, setShowMobileRootNav] = useState(true);
   const [defaultAccent, setDefaultAccent] = useState("en");
+  const [reviewDates, setReviewDates] = useState([]);
+  const [selectedReviewDate, setSelectedReviewDate] = useState("");
 
   function notify(text) {
     setToast({ visible: true, text, ts: Date.now() });
@@ -1994,6 +2327,29 @@ function App() {
     loadUnits();
   }, []);
 
+  function loadReviewDates() {
+    api("/api/recite/review/dates?recent_days=7")
+      .then((data) => {
+        const dates = data.dates || [];
+        setReviewDates(dates);
+        if (dates.length === 0) {
+          setSelectedReviewDate("");
+          return;
+        }
+        setSelectedReviewDate((prev) => {
+          if (prev && dates.includes(prev)) {
+            return prev;
+          }
+          return dates[0];
+        });
+      })
+      .catch((err) => setGlobalError(err.message));
+  }
+
+  useEffect(() => {
+    loadReviewDates();
+  }, []);
+
   useEffect(() => {
     api("/api/recite/config")
       .then((data) => {
@@ -2022,11 +2378,12 @@ function App() {
     setGlobalError("");
     return api("/api/recite/units", {
       method: "POST",
-      body: { name: createName },
+      body: { name: createName, recite_date: createReciteDate || "" },
     })
       .then((data) => {
         const newUnit = data.unit;
         setCreateName("");
+        setCreateReciteDate("");
         loadUnits();
         if (newUnit && newUnit.id) {
           setSelectedReciteType("unit");
@@ -2039,7 +2396,7 @@ function App() {
       });
   }
 
-  function renameUnit(unitId, name) {
+  function renameUnit(unitId, name, reciteDate) {
     setGlobalError("");
     const nextName = (name || "").trim();
     if (!nextName) {
@@ -2047,9 +2404,11 @@ function App() {
     }
     return api(`/api/recite/units/${unitId}/name`, {
       method: "PUT",
-      body: { name: nextName },
+      body: { name: nextName, recite_date: reciteDate || "" },
     }).then(() => {
-      setUnits((prev) => prev.map((u) => (u.id === unitId ? { ...u, name: nextName } : u)));
+      setUnits((prev) => prev.map((u) => (
+        u.id === unitId ? { ...u, name: nextName, recite_date: reciteDate || "" } : u
+      )));
     });
   }
 
@@ -2080,6 +2439,30 @@ function App() {
     });
   }
 
+  function deleteUnit(unitId) {
+    setGlobalError("");
+    return api(`/api/recite/units/${unitId}`, { method: "DELETE" })
+      .then(() => {
+        setUnits((prev) => {
+          const next = prev.filter((u) => u.id !== unitId);
+          if (selectedReciteType === "unit" && selectedUnitId === unitId) {
+            if (next.length > 0) {
+              setSelectedUnitId(next[0].id);
+            } else {
+              setSelectedUnitId(0);
+              setSelectedReciteType("forgotten");
+            }
+          }
+          return next;
+        });
+        loadUnits();
+      })
+      .catch((err) => {
+        setGlobalError(err.message);
+        throw err;
+      });
+  }
+
   if (isMobile) {
     const shouldShowBottomNav = mode === "todo" || (mode === "recite" && showMobileRootNav);
     return (
@@ -2092,6 +2475,9 @@ function App() {
               notify={notify}
               onRootHomeChange={setShowMobileRootNav}
               defaultAccent={defaultAccent}
+              reviewDates={reviewDates}
+              selectedReviewDate={selectedReviewDate}
+              onReviewDateChange={setSelectedReviewDate}
             />
           )}
           {mode === "todo" && <MobileTodoPanel />}
@@ -2133,13 +2519,17 @@ function App() {
                 setSelectedUnitId(unitId);
               }}
               onSelectForgotten={() => setSelectedReciteType("forgotten")}
+              onSelectReview={() => setSelectedReciteType("review")}
               onCreateUnit={createUnit}
               onRenameUnit={renameUnit}
+              onDeleteUnit={deleteUnit}
               onReorderUnits={reorderUnits}
               searchKeyword={searchKeyword}
               onSearchKeywordChange={setSearchKeyword}
               createName={createName}
               onCreateNameChange={setCreateName}
+              createReciteDate={createReciteDate}
+              onCreateReciteDateChange={setCreateReciteDate}
             />
           ) : (
             <SidebarTodo />
@@ -2168,6 +2558,16 @@ function App() {
 
           {mode === "recite" && selectedReciteType === "forgotten" && (
             <ForgottenPanel notify={notify} defaultAccent={defaultAccent} />
+          )}
+
+          {mode === "recite" && selectedReciteType === "review" && (
+            <ReviewPanel
+              notify={notify}
+              defaultAccent={defaultAccent}
+              reviewDates={reviewDates}
+              selectedReviewDate={selectedReviewDate}
+              onReviewDateChange={setSelectedReviewDate}
+            />
           )}
 
           {mode === "recite" && selectedReciteType === "unit" && !selectedUnit && (

@@ -36,13 +36,15 @@ type WordInfo struct {
 }
 
 type UnitInfo struct {
-	ID        int64  `json:"id"`
-	Name      string `json:"name"`
-	CreatedAt string `json:"created_at"`
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	ReciteDate string `json:"recite_date"`
+	CreatedAt  string `json:"created_at"`
 }
 
 type ClientConfig struct {
-	DefaultAccent string `json:"default_accent"`
+	DefaultAccent       string `json:"default_accent"`
+	ReviewIntervalsDays []int  `json:"review_intervals_days"`
 }
 
 type UnitWordItem struct {
@@ -55,4 +57,12 @@ type UnitWordItem struct {
 	AmAudio        string              `json:"am_audio"`
 	Parts          []WordPart          `json:"parts"`
 	SentenceGroups []WordSentenceGroup `json:"sentence_groups"`
+}
+
+type ReviewUnitSummary struct {
+	UnitID       int64  `json:"unit_id"`
+	Name         string `json:"name"`
+	WordCount    int    `json:"word_count"`
+	ReciteDate   string `json:"recite_date"`
+	DistanceDays int    `json:"distance_days"`
 }

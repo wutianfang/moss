@@ -22,6 +22,7 @@ var ddlList = []string{
 	`CREATE TABLE IF NOT EXISTS recite_units (
 		id BIGINT PRIMARY KEY AUTO_INCREMENT,
 		name VARCHAR(255) NOT NULL,
+		recite_date DATE NULL DEFAULT NULL,
 		sort_order BIGINT NOT NULL DEFAULT 0,
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -58,6 +59,9 @@ func AutoMigrate(db *sql.DB) error {
 	}
 	if err := addColumnIfMissing(db, `ALTER TABLE recite_units ADD COLUMN sort_order BIGINT NOT NULL DEFAULT 0 AFTER name`); err != nil {
 		return fmt.Errorf("add recite_units.sort_order failed: %w", err)
+	}
+	if err := addColumnIfMissing(db, `ALTER TABLE recite_units ADD COLUMN recite_date DATE NULL DEFAULT NULL AFTER name`); err != nil {
+		return fmt.Errorf("add recite_units.recite_date failed: %w", err)
 	}
 	if err := addIndexIfMissing(db, `ALTER TABLE recite_units ADD INDEX idx_sort_order(sort_order, id)`); err != nil {
 		return fmt.Errorf("add recite_units.idx_sort_order failed: %w", err)

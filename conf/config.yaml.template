@@ -9,6 +9,7 @@ storage:
   word_mp3_dir: "store/word_mp3"
 recite:
   default_accent: "en"
+  review_intervals_days: [1, 2, 4, 7, 15, 30]
 log:
   dir: "log"
   enable_request_log: false

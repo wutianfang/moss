@@ -32,7 +32,8 @@ type ConfigStorage struct {
 }
 
 type ConfigRecite struct {
-	DefaultAccent string `yaml:"default_accent"`
+	DefaultAccent       string `yaml:"default_accent"`
+	ReviewIntervalsDays []int  `yaml:"review_intervals_days"`
 }
 
 type ConfigLog struct {
@@ -63,6 +64,7 @@ func defaultConfig() *Config {
 	cfg.MySQL.ConnMaxLifetimeSec = 300
 	cfg.Storage.WordMP3Dir = "store/word_mp3"
 	cfg.Recite.DefaultAccent = "en"
+	cfg.Recite.ReviewIntervalsDays = []int{1, 2, 4, 7, 15, 30}
 	cfg.Log.Dir = "log"
 	cfg.Log.EnableRequestLog = false
 	return cfg
@@ -85,6 +87,7 @@ func fillDefault(cfg *Config) {
 		cfg.Storage.WordMP3Dir = "store/word_mp3"
 	}
 	cfg.Recite.DefaultAccent = normalizeAccent(cfg.Recite.DefaultAccent)
+	cfg.Recite.ReviewIntervalsDays = normalizeReviewIntervals(cfg.Recite.ReviewIntervalsDays)
 	if cfg.Log.Dir == "" {
 		cfg.Log.Dir = "log"
 	}
@@ -99,4 +102,26 @@ func normalizeAccent(raw string) string {
 	default:
 		return "en"
 	}
+}
+
+func normalizeReviewIntervals(raw []int) []int {
+	if len(raw) == 0 {
+		return []int{1, 2, 4, 7, 15, 30}
+	}
+	seen := make(map[int]struct{}, len(raw))
+	ret := make([]int, 0, len(raw))
+	for _, d := range raw {
+		if d <= 0 {
+			continue
+		}
+		if _, ok := seen[d]; ok {
+			continue
+		}
+		seen[d] = struct{}{}
+		ret = append(ret, d)
+	}
+	if len(ret) == 0 {
+		return []int{1, 2, 4, 7, 15, 30}
+	}
+	return ret
 }

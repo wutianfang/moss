@@ -18,12 +18,13 @@ const datetimeLayout = "2006-01-02 15:04:05"
 var validWord = regexp.MustCompile(`^[a-z][a-z'-]*$`)
 
 type Service struct {
-	wordRepo      *repository.WordRepository
-	unitRepo      *repository.UnitRepository
-	unitWordRepo  *repository.UnitWordRepository
-	forgottenRepo *repository.ForgottenWordRepository
-	wordFetcher   fetcher.WordFetcher
-	defaultAccent string
+	wordRepo        *repository.WordRepository
+	unitRepo        *repository.UnitRepository
+	unitWordRepo    *repository.UnitWordRepository
+	forgottenRepo   *repository.ForgottenWordRepository
+	wordFetcher     fetcher.WordFetcher
+	defaultAccent   string
+	reviewIntervals []int
 }
 
 func NewService(
@@ -33,20 +34,23 @@ func NewService(
 	forgottenRepo *repository.ForgottenWordRepository,
 	wordFetcher fetcher.WordFetcher,
 	defaultAccent string,
+	reviewIntervals []int,
 ) *Service {
 	return &Service{
-		wordRepo:      wordRepo,
-		unitRepo:      unitRepo,
-		unitWordRepo:  unitWordRepo,
-		forgottenRepo: forgottenRepo,
-		wordFetcher:   wordFetcher,
-		defaultAccent: normalizeAccent(defaultAccent),
+		wordRepo:        wordRepo,
+		unitRepo:        unitRepo,
+		unitWordRepo:    unitWordRepo,
+		forgottenRepo:   forgottenRepo,
+		wordFetcher:     wordFetcher,
+		defaultAccent:   normalizeAccent(defaultAccent),
+		reviewIntervals: normalizeReviewIntervals(reviewIntervals),
 	}
 }
 
 func (s *Service) GetClientConfig() ClientConfig {
 	return ClientConfig{
-		DefaultAccent: normalizeAccent(s.defaultAccent),
+		DefaultAccent:       normalizeAccent(s.defaultAccent),
+		ReviewIntervalsDays: append([]int{}, s.reviewIntervals...),
 	}
 }
 
@@ -58,31 +62,37 @@ func (s *Service) ListUnits(ctx context.Context) ([]UnitInfo, error) {
 	ret := make([]UnitInfo, 0, len(rows))
 	for _, row := range rows {
 		ret = append(ret, UnitInfo{
-			ID:        row.ID,
-			Name:      row.Name,
-			CreatedAt: row.CreatedAt.Format(datetimeLayout),
+			ID:         row.ID,
+			Name:       row.Name,
+			ReciteDate: formatOptionalDate(row.ReciteDate),
+			CreatedAt:  row.CreatedAt.Format(datetimeLayout),
 		})
 	}
 	return ret, nil
 }
 
-func (s *Service) CreateUnit(ctx context.Context, name string) (*UnitInfo, error) {
+func (s *Service) CreateUnit(ctx context.Context, name, reciteDate string) (*UnitInfo, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, NewBizError(1001, "单元名称不能为空")
 	}
-	unit, err := s.unitRepo.Create(ctx, name)
+	reciteDatePtr, err := parseOptionalDate(reciteDate)
+	if err != nil {
+		return nil, err
+	}
+	unit, err := s.unitRepo.Create(ctx, name, reciteDatePtr)
 	if err != nil {
 		return nil, err
 	}
 	return &UnitInfo{
-		ID:        unit.ID,
-		Name:      unit.Name,
-		CreatedAt: unit.CreatedAt.Format(datetimeLayout),
+		ID:         unit.ID,
+		Name:       unit.Name,
+		ReciteDate: formatOptionalDate(unit.ReciteDate),
+		CreatedAt:  unit.CreatedAt.Format(datetimeLayout),
 	}, nil
 }
 
-func (s *Service) RenameUnit(ctx context.Context, unitID int64, name string) error {
+func (s *Service) RenameUnit(ctx context.Context, unitID int64, name, reciteDate string) error {
 	if unitID <= 0 {
 		return NewBizError(1001, "unit_id 非法")
 	}
@@ -97,7 +107,11 @@ func (s *Service) RenameUnit(ctx context.Context, unitID int64, name string) err
 	if unit == nil {
 		return NewBizError(1002, "单元不存在")
 	}
-	return s.unitRepo.Rename(ctx, unitID, name)
+	reciteDatePtr, parseErr := parseOptionalDate(reciteDate)
+	if parseErr != nil {
+		return parseErr
+	}
+	return s.unitRepo.Rename(ctx, unitID, name, reciteDatePtr)
 }
 
 func (s *Service) ReorderUnits(ctx context.Context, unitIDs []int64) error {
@@ -128,6 +142,20 @@ func (s *Service) ReorderUnits(ctx context.Context, unitIDs []int64) error {
 		return err
 	}
 	return nil
+}
+
+func (s *Service) DeleteUnit(ctx context.Context, unitID int64) error {
+	if unitID <= 0 {
+		return NewBizError(1001, "unit_id 非法")
+	}
+	unit, err := s.unitRepo.GetByID(ctx, unitID)
+	if err != nil {
+		return err
+	}
+	if unit == nil {
+		return NewBizError(1002, "单元不存在")
+	}
+	return s.unitRepo.Delete(ctx, unitID)
 }
 
 func (s *Service) QueryWord(ctx context.Context, rawWord string) (*WordInfo, error) {
@@ -208,30 +236,10 @@ func (s *Service) ListUnitWords(ctx context.Context, unitID int64) ([]UnitWordIt
 		return nil, err
 	}
 	util.InfofWithRequest(ctx, "recite.list_unit_words.after_list_relations", "relation_count=%d", len(relations))
-	if len(relations) == 0 {
-		util.InfofWithRequest(ctx, "recite.list_unit_words.empty", "unit_id=%d", unitID)
-		return []UnitWordItem{}, nil
-	}
-
-	ids := make([]int64, 0, len(relations))
-	for _, relation := range relations {
-		ids = append(ids, relation.WordID)
-	}
-	util.InfofWithRequest(ctx, "recite.list_unit_words.after_collect_word_ids", "word_id_count=%d", len(ids))
-	wordMap, err := s.wordRepo.GetByIDs(ctx, ids)
+	ret, err := s.buildUnitWordItemsFromRelations(ctx, relations)
 	if err != nil {
-		util.ErrorfWithRequest(ctx, "recite.list_unit_words.get_words_failed", "unit_id=%d ids=%d err=%v", unitID, len(ids), err)
+		util.ErrorfWithRequest(ctx, "recite.list_unit_words.get_words_failed", "unit_id=%d relations=%d err=%v", unitID, len(relations), err)
 		return nil, err
-	}
-	util.InfofWithRequest(ctx, "recite.list_unit_words.after_get_words", "word_map_count=%d", len(wordMap))
-
-	ret := make([]UnitWordItem, 0, len(relations))
-	for _, relation := range relations {
-		word := wordMap[relation.WordID]
-		if word == nil {
-			continue
-		}
-		ret = append(ret, buildUnitWordItem(word, len(ret)+1))
 	}
 	util.InfofWithRequest(ctx, "recite.list_unit_words.finish", "output_count=%d", len(ret))
 	return ret, nil
@@ -304,6 +312,105 @@ func (s *Service) GetForgottenDictationWords(ctx context.Context) ([]UnitWordIte
 	return ret, nil
 }
 
+func (s *Service) ListReviewDateOptions(recentDays int) []string {
+	if recentDays <= 0 {
+		recentDays = 7
+	}
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	ret := make([]string, 0, recentDays)
+	for i := 0; i < recentDays; i++ {
+		ret = append(ret, today.AddDate(0, 0, -i).Format("2006-01-02"))
+	}
+	return ret
+}
+
+func (s *Service) ListReviewWordsByDate(ctx context.Context, rawDate string) ([]UnitWordItem, []ReviewUnitSummary, error) {
+	util.InfofWithRequest(ctx, "recite.list_review_words.begin", "raw_date=%q", strings.TrimSpace(rawDate))
+	targetDate, err := parseReviewDate(rawDate)
+	if err != nil {
+		util.InfofWithRequest(ctx, "recite.list_review_words.invalid_date", "raw_date=%q err=%v", strings.TrimSpace(rawDate), err)
+		return nil, nil, err
+	}
+	util.InfofWithRequest(
+		ctx,
+		"recite.list_review_words.after_parse_date",
+		"target_date=%s interval_count=%d intervals=%v",
+		targetDate.Format("2006-01-02"),
+		len(s.reviewIntervals),
+		s.reviewIntervals,
+	)
+	units, err := s.unitRepo.ListReviewByDate(ctx, targetDate, s.reviewIntervals)
+	if err != nil {
+		util.ErrorfWithRequest(
+			ctx,
+			"recite.list_review_words.list_units_failed",
+			"target_date=%s interval_count=%d err=%v",
+			targetDate.Format("2006-01-02"),
+			len(s.reviewIntervals),
+			err,
+		)
+		return nil, nil, err
+	}
+	util.InfofWithRequest(ctx, "recite.list_review_words.after_list_units", "unit_count=%d", len(units))
+	if len(units) == 0 {
+		util.InfofWithRequest(ctx, "recite.list_review_words.finish", "output_count=0 review_unit_count=0")
+		return []UnitWordItem{}, []ReviewUnitSummary{}, nil
+	}
+	unitIDs := make([]int64, 0, len(units))
+	for _, u := range units {
+		unitIDs = append(unitIDs, u.ID)
+	}
+	util.InfofWithRequest(ctx, "recite.list_review_words.after_collect_unit_ids", "unit_id_count=%d", len(unitIDs))
+	relations, err := s.unitWordRepo.ListByUnitIDs(ctx, unitIDs)
+	if err != nil {
+		util.ErrorfWithRequest(
+			ctx,
+			"recite.list_review_words.list_relations_failed",
+			"unit_id_count=%d err=%v",
+			len(unitIDs),
+			err,
+		)
+		return nil, nil, err
+	}
+	util.InfofWithRequest(ctx, "recite.list_review_words.after_list_relations", "relation_count=%d", len(relations))
+	words, err := s.buildUnitWordItemsFromRelations(ctx, relations)
+	if err != nil {
+		util.ErrorfWithRequest(
+			ctx,
+			"recite.list_review_words.build_words_failed",
+			"relation_count=%d err=%v",
+			len(relations),
+			err,
+		)
+		return nil, nil, err
+	}
+	util.InfofWithRequest(ctx, "recite.list_review_words.after_build_words", "word_count=%d", len(words))
+	reviewUnits := buildReviewUnitSummary(units, relations, targetDate)
+	util.InfofWithRequest(ctx, "recite.list_review_words.after_build_summary", "review_unit_count=%d", len(reviewUnits))
+	util.InfofWithRequest(ctx, "recite.list_review_words.finish", "output_count=%d review_unit_count=%d", len(words), len(reviewUnits))
+	return words, reviewUnits, nil
+}
+
+func (s *Service) GetReviewDictationWordsByDate(ctx context.Context, rawDate string) ([]UnitWordItem, error) {
+	words, _, err := s.ListReviewWordsByDate(ctx, rawDate)
+	if err != nil {
+		return nil, err
+	}
+	if len(words) <= 1 {
+		return words, nil
+	}
+	ret := make([]UnitWordItem, len(words))
+	copy(ret, words)
+	rand.New(rand.NewSource(time.Now().UnixNano())).Shuffle(len(ret), func(i, j int) {
+		ret[i], ret[j] = ret[j], ret[i]
+	})
+	for i := range ret {
+		ret[i].Seq = i + 1
+	}
+	return ret, nil
+}
+
 func normalizeWord(rawWord string) (string, error) {
 	word := strings.ToLower(strings.TrimSpace(rawWord))
 	if word == "" {
@@ -324,6 +431,28 @@ func normalizeAccent(raw string) string {
 	}
 }
 
+func normalizeReviewIntervals(raw []int) []int {
+	if len(raw) == 0 {
+		return []int{1, 2, 4, 7, 15, 30}
+	}
+	seen := make(map[int]struct{}, len(raw))
+	ret := make([]int, 0, len(raw))
+	for _, d := range raw {
+		if d <= 0 {
+			continue
+		}
+		if _, ok := seen[d]; ok {
+			continue
+		}
+		seen[d] = struct{}{}
+		ret = append(ret, d)
+	}
+	if len(ret) == 0 {
+		return []int{1, 2, 4, 7, 15, 30}
+	}
+	return ret
+}
+
 func (s *Service) listWordsByText(ctx context.Context, words []string) ([]UnitWordItem, error) {
 	ret := make([]UnitWordItem, 0, len(words))
 	for _, wordText := range words {
@@ -337,6 +466,93 @@ func (s *Service) listWordsByText(ctx context.Context, words []string) ([]UnitWo
 		ret = append(ret, buildUnitWordItem(row, len(ret)+1))
 	}
 	return ret, nil
+}
+
+func (s *Service) buildUnitWordItemsFromRelations(ctx context.Context, relations []entity.UnitWordRelation) ([]UnitWordItem, error) {
+	if len(relations) == 0 {
+		return []UnitWordItem{}, nil
+	}
+	ids := make([]int64, 0, len(relations))
+	for _, relation := range relations {
+		ids = append(ids, relation.WordID)
+	}
+	wordMap, err := s.wordRepo.GetByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	ret := make([]UnitWordItem, 0, len(relations))
+	for _, relation := range relations {
+		word := wordMap[relation.WordID]
+		if word == nil {
+			continue
+		}
+		ret = append(ret, buildUnitWordItem(word, len(ret)+1))
+	}
+	return ret, nil
+}
+
+func parseOptionalDate(raw string) (*time.Time, error) {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return nil, nil
+	}
+	t, err := time.ParseInLocation("2006-01-02", text, time.Local)
+	if err != nil {
+		return nil, NewBizError(1001, "背诵时间格式错误，需为 yyyy-mm-dd")
+	}
+	value := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local)
+	return &value, nil
+}
+
+func parseReviewDate(raw string) (time.Time, error) {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		now := time.Now()
+		return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()), nil
+	}
+	t, err := time.ParseInLocation("2006-01-02", text, time.Local)
+	if err != nil {
+		return time.Time{}, NewBizError(1001, "日期格式错误，需为 yyyy-mm-dd")
+	}
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local), nil
+}
+
+func formatOptionalDate(date *time.Time) string {
+	if date == nil {
+		return ""
+	}
+	return date.Format("2006-01-02")
+}
+
+func buildReviewUnitSummary(
+	units []entity.ReciteUnit,
+	relations []entity.UnitWordRelation,
+	targetDate time.Time,
+) []ReviewUnitSummary {
+	if len(units) == 0 {
+		return []ReviewUnitSummary{}
+	}
+	countByUnit := make(map[int64]int, len(units))
+	for _, rel := range relations {
+		countByUnit[rel.UnitID]++
+	}
+	ret := make([]ReviewUnitSummary, 0, len(units))
+	for _, unit := range units {
+		reciteDateText := formatOptionalDate(unit.ReciteDate)
+		distance := 0
+		if unit.ReciteDate != nil {
+			reciteDate := time.Date(unit.ReciteDate.Year(), unit.ReciteDate.Month(), unit.ReciteDate.Day(), 0, 0, 0, 0, targetDate.Location())
+			distance = int(targetDate.Sub(reciteDate).Hours() / 24)
+		}
+		ret = append(ret, ReviewUnitSummary{
+			UnitID:       unit.ID,
+			Name:         unit.Name,
+			WordCount:    countByUnit[unit.ID],
+			ReciteDate:   reciteDateText,
+			DistanceDays: distance,
+		})
+	}
+	return ret
 }
 
 func buildWordInfo(row *entity.Word) WordInfo {

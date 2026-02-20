@@ -8,22 +8,13 @@ import (
 	"github.com/wutianfang/moss/util"
 )
 
-func RenameUnit(svc *recite.Service) echo.HandlerFunc {
-	type request struct {
-		Name       string `json:"name" form:"name"`
-		ReciteDate string `json:"recite_date" form:"recite_date"`
-	}
-
+func DeleteUnit(svc *recite.Service) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		unitID, err := strconv.ParseInt(c.Param("unitId"), 10, 64)
 		if err != nil {
 			return util.JSONError(c, 1001, "unit_id 非法")
 		}
-		req := request{}
-		if err := c.Bind(&req); err != nil {
-			return util.JSONError(c, 1001, "请求参数错误")
-		}
-		if err := svc.RenameUnit(c.Request().Context(), unitID, req.Name, req.ReciteDate); err != nil {
+		if err := svc.DeleteUnit(c.Request().Context(), unitID); err != nil {
 			code, msg := recite.ParseError(err)
 			return util.JSONError(c, code, msg)
 		}

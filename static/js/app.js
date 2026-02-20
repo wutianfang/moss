@@ -1,4 +1,4 @@
-const { useEffect, useMemo, useRef, useState } = React;
+const { useCallback, useEffect, useMemo, useRef, useState } = React;
 
 function api(path, options = {}) {
   const init = { ...options };
@@ -24,7 +24,7 @@ function useAudioPlayer() {
     ref.current = new Audio();
   }
 
-  function playAudio(url) {
+  const playAudio = useCallback((url) => {
     if (!url) {
       return;
     }
@@ -32,7 +32,7 @@ function useAudioPlayer() {
     ref.current.src = url;
     ref.current.currentTime = 0;
     ref.current.play().catch(() => {});
-  }
+  }, []);
 
   return playAudio;
 }

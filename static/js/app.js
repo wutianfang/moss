@@ -231,6 +231,9 @@ function WordTable({ rows, playAudio, operationLabel, onOperation, resultResolve
                   <span className={`quiz-result-text ${result ? result.className || "" : ""}`}>
                     {result ? result.text : "-"}
                   </span>
+                  {result && result.detail && (
+                    <div className="quiz-result-detail">{result.detail}</div>
+                  )}
                 </td>
               )}
               <td>
@@ -339,20 +342,21 @@ function DictationPanel({
   const [showAnswer, setShowAnswer] = useState(false);
   const [inputValue, setInputValue] = useState("");
   const [resultMap, setResultMap] = useState({});
+  const [submittedInputMap, setSubmittedInputMap] = useState({});
   const [error, setError] = useState("");
 
   function wordKey(word) {
     return normalizeWordText(word);
   }
 
-  function resultMeta(status) {
+  function resultMeta(status, detail) {
     if (status === "correct") {
       return { text: "正确", className: "correct" };
     }
     if (status === "forgotten") {
       return { text: "忘记", className: "forgotten" };
     }
-    return { text: "错误", className: "wrong" };
+    return { text: "错误", className: "wrong", detail: detail || "-" };
   }
 
   const stats = useMemo(() => {
@@ -383,6 +387,7 @@ function DictationPanel({
         setShowAnswer(false);
         setInputValue("");
         setResultMap({});
+        setSubmittedInputMap({});
         setError("");
       })
       .catch((err) => setError(err.message));
@@ -412,6 +417,7 @@ function DictationPanel({
     if (resultMap[key] === "forgotten") {
       return;
     }
+    setSubmittedInputMap((prev) => ({ ...prev, [key]: (inputValue || "").trim() }));
     const ok = normalizeWordText(inputValue) === normalizeWordText(row.word);
     setResultMap((prev) => ({ ...prev, [key]: ok ? "correct" : "wrong" }));
   }
@@ -497,6 +503,11 @@ function DictationPanel({
             delete next[wordKey(word)];
             return next;
           });
+          setSubmittedInputMap((prev) => {
+            const next = { ...prev };
+            delete next[wordKey(word)];
+            return next;
+          });
         }
       })
       .catch((err) => setError(err.message));
@@ -546,7 +557,7 @@ function DictationPanel({
             resultResolver={(row) => {
               const key = wordKey(row.word);
               const status = resultMap[key] || "wrong";
-              return resultMeta(status);
+              return resultMeta(status, submittedInputMap[key]);
             }}
           />
         </div>
@@ -1177,6 +1188,7 @@ function MobileQuizPanel({
   operationLabel,
   onOperation,
   defaultAccent,
+  onOpenWord,
 }) {
   const playAudio = useAudioPlayer();
   const inputRef = useRef(null);
@@ -1185,14 +1197,50 @@ function MobileQuizPanel({
   const [inputValue, setInputValue] = useState("");
   const [revealed, setRevealed] = useState(false);
   const [result, setResult] = useState("");
+  const [statusMap, setStatusMap] = useState({});
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [finished, setFinished] = useState(false);
-  const [correctCount, setCorrectCount] = useState(0);
-  const [wrongCount, setWrongCount] = useState(0);
-  const [operationCount, setOperationCount] = useState(0);
-  const [operatedCurrent, setOperatedCurrent] = useState(false);
   const current = words[index] || null;
+
+  const stats = useMemo(() => {
+    const total = words.length;
+    let correct = 0;
+    let wrong = 0;
+    let operated = 0;
+    for (let i = 0; i < words.length; i += 1) {
+      const status = statusMap[i];
+      if (status === "correct") {
+        correct += 1;
+      } else if (status === "wrong") {
+        wrong += 1;
+      } else if (status === "operated") {
+        operated += 1;
+      }
+    }
+    const unresolved = Math.max(total - correct - wrong - operated, 0);
+    return {
+      total,
+      correct,
+      wrong: wrong + unresolved,
+      operated,
+    };
+  }, [words, statusMap]);
+
+  const incorrectRows = useMemo(() => {
+    const ret = [];
+    for (let i = 0; i < words.length; i += 1) {
+      const status = statusMap[i];
+      if (status === "wrong" || status === "operated") {
+        ret.push({
+          row: words[i],
+          index: i,
+          status,
+        });
+      }
+    }
+    return ret;
+  }, [words, statusMap]);
 
   useEffect(() => {
     setLoading(true);
@@ -1205,11 +1253,8 @@ function MobileQuizPanel({
         setInputValue("");
         setRevealed(false);
         setResult("");
+        setStatusMap({});
         setFinished(rows.length === 0);
-        setCorrectCount(0);
-        setWrongCount(0);
-        setOperationCount(0);
-        setOperatedCurrent(false);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -1243,7 +1288,6 @@ function MobileQuizPanel({
     setInputValue("");
     setRevealed(false);
     setResult("");
-    setOperatedCurrent(false);
   }
 
   function submitOrNext() {
@@ -1255,11 +1299,7 @@ function MobileQuizPanel({
       return;
     }
     const ok = normalizeWordText(inputValue) === normalizeWordText(current.word);
-    if (ok) {
-      setCorrectCount((prev) => prev + 1);
-    } else {
-      setWrongCount((prev) => prev + 1);
-    }
+    setStatusMap((prev) => ({ ...prev, [index]: ok ? "correct" : "wrong" }));
     setResult(ok ? "correct" : "wrong");
     setRevealed(true);
     if (type === "spelling") {
@@ -1271,11 +1311,12 @@ function MobileQuizPanel({
     if (!current || !onOperation) {
       return;
     }
+    const shouldCountAsOperate = !revealed;
     onOperation(current.word)
       .then(() => {
-        if (!operatedCurrent) {
-          setOperationCount((prev) => prev + 1);
-          setOperatedCurrent(true);
+        if (shouldCountAsOperate) {
+          setStatusMap((prev) => ({ ...prev, [index]: "operated" }));
+          setResult("operated");
         }
         setRevealed(true);
       })
@@ -1296,6 +1337,9 @@ function MobileQuizPanel({
   }
 
   if (finished || !current) {
+    const finishedTitleClass = type === "dictation" && incorrectRows.length > 0
+      ? "mobile-quiz-finished with-list"
+      : "mobile-quiz-finished";
     return (
       <div className="mobile-page-card">
         <div className="mobile-topbar">
@@ -1303,11 +1347,67 @@ function MobileQuizPanel({
           <h2 className="mobile-page-title">{title}</h2>
           <div />
         </div>
-        <div className="mobile-quiz-finished">本轮已完成</div>
-        <div className="mobile-quiz-finished-stats">对 {correctCount} 个，错 {wrongCount} 个</div>
+        <div className={finishedTitleClass}>本轮已完成</div>
         <div className="mobile-quiz-finished-stats">
-          {operationLabel} {operationCount} 个
+          共 {stats.total} 个，正确 {stats.correct} 个，错误 {stats.wrong} 个，{operationLabel} {stats.operated} 个
         </div>
+        {type === "dictation" && incorrectRows.length > 0 && (
+          <div className="mobile-quiz-finished-list">
+            {incorrectRows.map((item) => {
+              const row = item.row;
+              const meaningRows = formatMeaningLines(row.parts);
+              return (
+                <div key={`${row.word}-${item.index}`} className="mobile-word-item mobile-quiz-finished-item">
+                  <div className="mobile-word-item-head mobile-word-item-head-finished">
+                    <button
+                      className="mobile-word-open-btn"
+                      onClick={() => {
+                        if (onOpenWord) {
+                          onOpenWord(row);
+                        }
+                      }}
+                    >
+                      {row.word}
+                    </button>
+                    <div className="mobile-word-item-right-meta">
+                      <span className="mobile-word-item-no-inline">#{item.index + 1}</span>
+                      <span className={`mobile-word-item-status ${item.status === "wrong" ? "wrong" : "operated"}`}>
+                        {item.status === "wrong" ? "错误" : operationLabel}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mobile-word-item-pron">
+                    <a
+                      className="mobile-pron-link"
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        playAudio(getEnglishAudio(row));
+                      }}
+                    >
+                      英 [{row.ph_en || "-"}]
+                    </a>
+                    <a
+                      className="mobile-pron-link"
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        playAudio(getAmericanAudio(row) || getEnglishAudio(row));
+                      }}
+                    >
+                      美 [{row.ph_am || "-"}]
+                    </a>
+                  </div>
+                  <div className="mobile-word-item-mean">
+                    {meaningRows.length > 0 ? meaningRows.map((line, lineIdx) => (
+                      <div key={`${row.word}-quiz-finished-mean-${lineIdx}`} className="mobile-word-item-mean-line">{line}</div>
+                    )) : "-"}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     );
   }
@@ -1327,7 +1427,7 @@ function MobileQuizPanel({
           <div className="mobile-quiz-meaning">{renderMeaningPreview(current.parts)}</div>
         )}
 
-        <div className="mobile-quiz-input-row">
+        <div className={`mobile-quiz-input-row ${type === "dictation" ? "dictation" : ""}`}>
           <input
             ref={inputRef}
             className="input mobile-quiz-input"
@@ -1341,12 +1441,20 @@ function MobileQuizPanel({
             }}
           />
           {type === "dictation" && (
-            <button
-              className="btn secondary mobile-replay-btn"
-              onClick={() => playAudio(getDefaultAudio(current, defaultAccent))}
-            >
-              重播
-            </button>
+            <>
+              <button
+                className="btn secondary mobile-replay-btn"
+                onClick={() => playAudio(getEnglishAudio(current))}
+              >
+                英音
+              </button>
+              <button
+                className="btn secondary mobile-replay-btn"
+                onClick={() => playAudio(getAmericanAudio(current) || getEnglishAudio(current))}
+              >
+                美音
+              </button>
+            </>
           )}
         </div>
 
@@ -1365,6 +1473,7 @@ function MobileQuizPanel({
           <div className="mobile-quiz-result-wrap">
             {result === "correct" && <div className="mobile-quiz-result ok">正确</div>}
             {result === "wrong" && <div className="mobile-quiz-result bad">错误</div>}
+            {result === "operated" && <div className="mobile-quiz-result op">{operationLabel}</div>}
             <div className="mobile-quiz-word-detail">
               <div className="mobile-quiz-word-name">{current.word}</div>
               <MobileWordDetailBody row={current} playAudio={playAudio} />
@@ -1757,6 +1866,17 @@ function MobileReciteRoot({
   const opAction = context.kind === "forgotten" ? rememberWord : forgetWord;
   const topMetaCountText = `共${words.length}个单词`;
 
+  function openWordFromQuiz(row) {
+    if (!row) {
+      return;
+    }
+    const pageScrollTop = currentPageScrollTop();
+    replaceCurrentNavState(view, context, null, 0, pageScrollTop, false);
+    setSelectedWord(row);
+    setView("word");
+    pushNavState("word", context, row, 0, pageScrollTop, false);
+  }
+
   if (view === "quiz_dictation") {
     const fetchPath = context.kind === "forgotten"
       ? "/api/recite/forgotten/dictation"
@@ -1771,6 +1891,7 @@ function MobileReciteRoot({
         operationLabel={opLabel}
         onOperation={opAction}
         defaultAccent={defaultAccent}
+        onOpenWord={openWordFromQuiz}
         onBack={goBack}
       />
     );
@@ -1790,6 +1911,7 @@ function MobileReciteRoot({
         operationLabel={opLabel}
         onOperation={opAction}
         defaultAccent={defaultAccent}
+        onOpenWord={openWordFromQuiz}
         onBack={goBack}
       />
     );

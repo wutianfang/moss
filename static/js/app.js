@@ -1188,7 +1188,6 @@ function MobileQuizPanel({
   operationLabel,
   onOperation,
   defaultAccent,
-  onOpenWord,
 }) {
   const playAudio = useAudioPlayer();
   const inputRef = useRef(null);
@@ -1201,6 +1200,7 @@ function MobileQuizPanel({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [finished, setFinished] = useState(false);
+  const [detailWord, setDetailWord] = useState(null);
   const current = words[index] || null;
 
   const stats = useMemo(() => {
@@ -1255,6 +1255,7 @@ function MobileQuizPanel({
         setResult("");
         setStatusMap({});
         setFinished(rows.length === 0);
+        setDetailWord(null);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -1336,6 +1337,20 @@ function MobileQuizPanel({
     );
   }
 
+  if (detailWord) {
+    return (
+      <div className="mobile-page-card">
+        <div className="mobile-topbar">
+          <button className="mobile-back-btn" onClick={() => setDetailWord(null)}>{"< 退出"}</button>
+          <div />
+          <div />
+        </div>
+        <h2 className="mobile-page-title mobile-word-page-title">{detailWord.word}</h2>
+        <MobileWordDetailBody row={detailWord} playAudio={playAudio} />
+      </div>
+    );
+  }
+
   if (finished || !current) {
     const finishedTitleClass = type === "dictation" && incorrectRows.length > 0
       ? "mobile-quiz-finished with-list"
@@ -1361,11 +1376,7 @@ function MobileQuizPanel({
                   <div className="mobile-word-item-head mobile-word-item-head-finished">
                     <button
                       className="mobile-word-open-btn"
-                      onClick={() => {
-                        if (onOpenWord) {
-                          onOpenWord(row);
-                        }
-                      }}
+                      onClick={() => setDetailWord(row)}
                     >
                       {row.word}
                     </button>
@@ -1866,17 +1877,6 @@ function MobileReciteRoot({
   const opAction = context.kind === "forgotten" ? rememberWord : forgetWord;
   const topMetaCountText = `共${words.length}个单词`;
 
-  function openWordFromQuiz(row) {
-    if (!row) {
-      return;
-    }
-    const pageScrollTop = currentPageScrollTop();
-    replaceCurrentNavState(view, context, null, 0, pageScrollTop, false);
-    setSelectedWord(row);
-    setView("word");
-    pushNavState("word", context, row, 0, pageScrollTop, false);
-  }
-
   if (view === "quiz_dictation") {
     const fetchPath = context.kind === "forgotten"
       ? "/api/recite/forgotten/dictation"
@@ -1891,7 +1891,6 @@ function MobileReciteRoot({
         operationLabel={opLabel}
         onOperation={opAction}
         defaultAccent={defaultAccent}
-        onOpenWord={openWordFromQuiz}
         onBack={goBack}
       />
     );
@@ -1911,7 +1910,6 @@ function MobileReciteRoot({
         operationLabel={opLabel}
         onOperation={opAction}
         defaultAccent={defaultAccent}
-        onOpenWord={openWordFromQuiz}
         onBack={goBack}
       />
     );

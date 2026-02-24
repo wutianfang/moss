@@ -1232,6 +1232,12 @@ function MobileQuizPanel({
     }
     return Math.round((stats.correct * 100) / stats.total);
   }, [stats.correct, stats.total]);
+  const currentMeaningLines = useMemo(() => {
+    if (!current) {
+      return [];
+    }
+    return formatMeaningLines(current.parts);
+  }, [current]);
 
   const incorrectRows = useMemo(() => {
     const ret = [];
@@ -1358,9 +1364,7 @@ function MobileQuizPanel({
   }
 
   if (finished || !current) {
-    const finishedTitleClass = type === "dictation"
-      ? `mobile-quiz-finished mobile-quiz-finished-dictation ${incorrectRows.length > 0 ? "with-list" : ""}`.trim()
-      : "mobile-quiz-finished";
+    const finishedTitleClass = `mobile-quiz-finished mobile-quiz-finished-dictation ${incorrectRows.length > 0 ? "with-list" : ""}`.trim();
     return (
       <div className="mobile-page-card">
         <div className="mobile-topbar">
@@ -1368,23 +1372,14 @@ function MobileQuizPanel({
           <h2 className="mobile-page-title">{title}</h2>
           <div />
         </div>
-        {type === "dictation" ? (
-          <>
-            <div className={finishedTitleClass}>本轮已完成，总分 {scoreValue} 分</div>
-            <div className="mobile-quiz-finished-summary-line">单词共：{stats.total} 个</div>
-            <div className="mobile-quiz-finished-summary-line">正确：{stats.correct} 个</div>
-            <div className="mobile-quiz-finished-summary-line">错误：{stats.wrong} 个</div>
-            <div className="mobile-quiz-finished-summary-line">{operationLabel}：{stats.operated} 个</div>
-          </>
-        ) : (
-          <>
-            <div className={finishedTitleClass}>本轮已完成</div>
-            <div className="mobile-quiz-finished-stats">
-              共 {stats.total} 个，正确 {stats.correct} 个，错误 {stats.wrong} 个，{operationLabel} {stats.operated} 个
-            </div>
-          </>
-        )}
-        {type === "dictation" && incorrectRows.length > 0 && (
+        <>
+          <div className={finishedTitleClass}>本轮已完成，总分 {scoreValue} 分</div>
+          <div className="mobile-quiz-finished-summary-line">单词共：{stats.total} 个</div>
+          <div className="mobile-quiz-finished-summary-line">正确：{stats.correct} 个</div>
+          <div className="mobile-quiz-finished-summary-line">错误：{stats.wrong} 个</div>
+          <div className="mobile-quiz-finished-summary-line">{operationLabel}：{stats.operated} 个</div>
+        </>
+        {incorrectRows.length > 0 && (
           <div className="mobile-quiz-finished-list">
             {incorrectRows.map((item) => {
               const row = item.row;
@@ -1453,7 +1448,11 @@ function MobileQuizPanel({
         <div className="mobile-quiz-progress">{index + 1}/{words.length}</div>
 
         {type === "spelling" && (
-          <div className="mobile-quiz-meaning">{renderMeaningPreview(current.parts)}</div>
+          <div className="mobile-quiz-meaning mobile-quiz-meaning-multi">
+            {currentMeaningLines.length > 0 ? currentMeaningLines.map((line, idx) => (
+              <div key={`${current.word}-quiz-meaning-${idx}`} className="mobile-quiz-meaning-line">{line}</div>
+            )) : <div className="mobile-quiz-meaning-line">-</div>}
+          </div>
         )}
 
         <div className={`mobile-quiz-input-row ${type === "dictation" ? "dictation" : ""}`}>

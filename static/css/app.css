@@ -878,6 +878,14 @@ a:hover {
   font-size: 24px;
 }
 
+.mobile-quiz-meaning-multi {
+  text-align: left;
+}
+
+.mobile-quiz-meaning-line {
+  display: block;
+}
+
 .mobile-quiz-input-row {
   display: grid;
   grid-template-columns: 1fr;

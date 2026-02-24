@@ -1226,6 +1226,12 @@ function MobileQuizPanel({
       operated,
     };
   }, [words, statusMap]);
+  const scoreText = useMemo(() => {
+    if (stats.total <= 0) {
+      return "0.0";
+    }
+    return (stats.correct / stats.total).toFixed(1);
+  }, [stats.correct, stats.total]);
 
   const incorrectRows = useMemo(() => {
     const ret = [];
@@ -1364,6 +1370,7 @@ function MobileQuizPanel({
         </div>
         <div className={finishedTitleClass}>本轮已完成</div>
         <div className="mobile-quiz-finished-stats">
+          {type === "dictation" && <>分数 {scoreText}，</>}
           共 {stats.total} 个，正确 {stats.correct} 个，错误 {stats.wrong} 个，{operationLabel} {stats.operated} 个
         </div>
         {type === "dictation" && incorrectRows.length > 0 && (
@@ -1486,7 +1493,7 @@ function MobileQuizPanel({
             {result === "wrong" && <div className="mobile-quiz-result bad">错误</div>}
             {result === "operated" && <div className="mobile-quiz-result op">{operationLabel}</div>}
             <div className="mobile-quiz-word-detail">
-              <div className="mobile-quiz-word-name">{current.word}</div>
+              <div className="mobile-quiz-answer-word">正确答案：{current.word}</div>
               <MobileWordDetailBody row={current} playAudio={playAudio} />
             </div>
           </div>

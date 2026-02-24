@@ -937,14 +937,15 @@ a:hover {
 }
 
 .mobile-quiz-word-detail {
-  margin-top: 8px;
+  margin-top: 16px;
 }
 
-.mobile-quiz-word-name {
-  font-size: 30px;
+.mobile-quiz-answer-word {
+  font-size: 28px;
   font-weight: 600;
-  text-align: center;
-  margin-bottom: 8px;
+  text-align: left;
+  margin-bottom: 10px;
+  color: #0f172a;
 }
 
 .mobile-quiz-finished {

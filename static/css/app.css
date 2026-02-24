@@ -958,10 +958,22 @@ a:hover {
   margin-top: 12px;
 }
 
+.mobile-quiz-finished-dictation {
+  margin-top: 8px;
+  text-align: left;
+}
+
 .mobile-quiz-finished-stats {
   text-align: center;
   font-size: 22px;
   margin-top: 14px;
+  color: #334155;
+}
+
+.mobile-quiz-finished-summary-line {
+  text-align: left;
+  font-size: 16px;
+  margin-top: 8px;
   color: #334155;
 }
 

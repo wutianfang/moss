@@ -52,3 +52,27 @@ type UnitWordRelation struct {
 	WordID    int64     `json:"word_id"`
 	CreatedAt time.Time `json:"created_at"`
 }
+
+type Quiz struct {
+	ID               int64      `json:"id"`
+	QuizType         string     `json:"quiz_type"`
+	Title            string     `json:"title"`
+	Status           string     `json:"status"`
+	SourceKind       string     `json:"source_kind"`
+	SourceUnitID     int64      `json:"source_unit_id"`
+	SourceReviewDate *time.Time `json:"source_review_date"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+type QuizWord struct {
+	ID          int64     `json:"id"`
+	QuizID      int64     `json:"quiz_id"`
+	WordID      int64     `json:"word_id"`
+	OrderNo     int       `json:"order_no"`
+	Status      string    `json:"status"`
+	InputAnswer string    `json:"input_answer"`
+	Result      string    `json:"result"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}

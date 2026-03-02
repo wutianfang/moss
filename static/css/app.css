@@ -549,6 +549,12 @@ a:hover {
   margin-top: 10px;
 }
 
+.quiz-current-meaning {
+  margin-top: 8px;
+  color: #334155;
+  line-height: 1.55;
+}
+
 .dictation-input {
   width: min(420px, 100%);
 }

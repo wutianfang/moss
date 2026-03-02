@@ -20,12 +20,14 @@ func registerRoutes(e *echo.Echo, cfg *conf.Config, db *sql.DB) {
 	unitRepo := repository.NewUnitRepository(db)
 	unitWordRepo := repository.NewUnitWordRepository(db)
 	forgottenRepo := repository.NewForgottenWordRepository(db)
+	quizRepo := repository.NewQuizRepository(db)
 	wordFetcher := fetcher.NewIcibaFetcher(cfg.Storage.WordMP3Dir)
 	reciteService := recite.NewService(
 		wordRepo,
 		unitRepo,
 		unitWordRepo,
 		forgottenRepo,
+		quizRepo,
 		wordFetcher,
 		cfg.Recite.DefaultAccent,
 		cfg.Recite.ReviewIntervalsDays,
@@ -59,4 +61,10 @@ func registerRoutes(e *echo.Echo, cfg *conf.Config, db *sql.DB) {
 	reciteGroup.GET("/forgotten/words", recitehandler.ListForgottenWords(reciteService))
 	reciteGroup.POST("/forgotten/words/remember", recitehandler.RememberForgottenWord(reciteService))
 	reciteGroup.GET("/forgotten/dictation", recitehandler.GetForgottenDictation(reciteService))
+	reciteGroup.POST("/quizzes/start", recitehandler.StartQuiz(reciteService))
+	reciteGroup.GET("/quizzes", recitehandler.ListQuizzes(reciteService))
+	reciteGroup.GET("/quizzes/running", recitehandler.GetQuizRunning(reciteService))
+	reciteGroup.GET("/quizzes/:quizId", recitehandler.GetQuiz(reciteService))
+	reciteGroup.POST("/quizzes/:quizId/words/:seq/submit", recitehandler.SubmitQuizWord(reciteService))
+	reciteGroup.POST("/quizzes/:quizId/finish", recitehandler.FinishQuiz(reciteService))
 }

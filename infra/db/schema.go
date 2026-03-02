@@ -45,6 +45,35 @@ var ddlList = []string{
 		KEY idx_word(word),
 		KEY idx_remembered(remembered)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`,
+	`CREATE TABLE IF NOT EXISTS quizzes (
+		id BIGINT PRIMARY KEY AUTO_INCREMENT,
+		quiz_type VARCHAR(16) NOT NULL,
+		title VARCHAR(255) NOT NULL,
+		status VARCHAR(16) NOT NULL,
+		source_kind VARCHAR(16) NOT NULL DEFAULT '',
+		source_unit_id BIGINT NOT NULL DEFAULT 0,
+		source_review_date DATE NULL DEFAULT NULL,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		KEY idx_quiz_created(created_at, id),
+		KEY idx_quiz_status_created(status, created_at, id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`,
+	`CREATE TABLE IF NOT EXISTS quiz_words (
+		id BIGINT PRIMARY KEY AUTO_INCREMENT,
+		quiz_id BIGINT NOT NULL,
+		word_id BIGINT NOT NULL,
+		order_no INT NOT NULL,
+		status VARCHAR(16) NOT NULL DEFAULT '未测试',
+		input_answer VARCHAR(255) NOT NULL DEFAULT '',
+		result VARCHAR(16) NOT NULL DEFAULT '',
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		UNIQUE KEY uq_quiz_order(quiz_id, order_no),
+		KEY idx_quiz_word_quiz(quiz_id, status, order_no),
+		KEY idx_quiz_word_word(word_id),
+		CONSTRAINT fk_quiz_words_quiz FOREIGN KEY (quiz_id) REFERENCES quizzes(id) ON DELETE CASCADE,
+		CONSTRAINT fk_quiz_words_word FOREIGN KEY (word_id) REFERENCES words(id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`,
 }
 
 func AutoMigrate(db *sql.DB) error {
@@ -74,6 +103,12 @@ func AutoMigrate(db *sql.DB) error {
 	}
 	if err := dropColumnIfExists(db, `ALTER TABLE words DROP COLUMN am_audio_path`); err != nil {
 		return fmt.Errorf("drop words.am_audio_path failed: %w", err)
+	}
+	if err := addColumnIfMissing(db, `ALTER TABLE quiz_words ADD COLUMN input_answer VARCHAR(255) NOT NULL DEFAULT '' AFTER status`); err != nil {
+		return fmt.Errorf("add quiz_words.input_answer failed: %w", err)
+	}
+	if err := addColumnIfMissing(db, `ALTER TABLE quiz_words ADD COLUMN result VARCHAR(16) NOT NULL DEFAULT '' AFTER input_answer`); err != nil {
+		return fmt.Errorf("add quiz_words.result failed: %w", err)
 	}
 	return nil
 }

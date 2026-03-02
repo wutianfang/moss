@@ -248,7 +248,7 @@ function WordTable({ rows, playAudio, operationLabel, onOperation, resultResolve
                           href="#"
                           onClick={(e) => {
                             e.preventDefault();
-                            onOperation(row.word);
+                            onOperation(row.word, row, idx);
                           }}
                         >
                           {operationLabel}
@@ -329,24 +329,32 @@ function TodoPanel() {
 
 function DictationPanel({
   title,
-  fetchPath,
+  quizType,
+  startPayload,
+  quizId,
   onBack,
   operationLabel,
   onOperation,
-  removeOnOperationSuccess,
   defaultAccent,
+  readOnly = false,
+  onQuizStateChange,
 }) {
   const playAudio = useAudioPlayer();
+  const finishOnceRef = useRef(false);
+  const isDictation = quizType === "读写";
   const [words, setWords] = useState([]);
+  const [quiz, setQuiz] = useState(null);
   const [index, setIndex] = useState(-1);
   const [showAnswer, setShowAnswer] = useState(false);
   const [inputValue, setInputValue] = useState("");
   const [resultMap, setResultMap] = useState({});
+  const [wordStatusMap, setWordStatusMap] = useState({});
   const [submittedInputMap, setSubmittedInputMap] = useState({});
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  function wordKey(word) {
-    return normalizeWordText(word);
+  function wordKey(row) {
+    return Number(row && row.seq) || 0;
   }
 
   function resultMeta(status, detail) {
@@ -359,12 +367,99 @@ function DictationPanel({
     return { text: "错误", className: "wrong", detail: detail || "-" };
   }
 
+  function serverResultToLocal(raw) {
+    if (raw === "正确") {
+      return "correct";
+    }
+    if (raw === "忘记") {
+      return "forgotten";
+    }
+    if (raw === "错误") {
+      return "wrong";
+    }
+    return "";
+  }
+
+  function localResultToServer(raw) {
+    if (raw === "correct") {
+      return "正确";
+    }
+    if (raw === "forgotten") {
+      return "忘记";
+    }
+    return "错误";
+  }
+
+  function markWordCompleted(row, result, submittedInput) {
+    const key = wordKey(row);
+    if (key <= 0) {
+      return;
+    }
+    setResultMap((prev) => ({ ...prev, [key]: result }));
+    setWordStatusMap((prev) => ({ ...prev, [key]: "已测试" }));
+    setSubmittedInputMap((prev) => ({ ...prev, [key]: submittedInput || "" }));
+    setWords((prev) => prev.map((item) => (
+      wordKey(item) === key
+        ? {
+          ...item,
+          word_status: "已测试",
+          quiz_result: localResultToServer(result),
+          input_answer: submittedInput || "",
+        }
+        : item
+    )));
+  }
+
+  function findFirstPendingIndex(rows, statusMap) {
+    for (let i = 0; i < rows.length; i += 1) {
+      const key = wordKey(rows[i]);
+      if ((statusMap[key] || "未测试") !== "已测试") {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  function findNextPendingIndex(rows, statusMap, currentIdx) {
+    for (let i = currentIdx + 1; i < rows.length; i += 1) {
+      const key = wordKey(rows[i]);
+      if ((statusMap[key] || "未测试") !== "已测试") {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  function finishQuizIfNeeded(force = false) {
+    if (!quiz || !quiz.id || readOnly || finishOnceRef.current) {
+      return;
+    }
+    const allDone = words.length > 0 && words.every((row) => {
+      const key = wordKey(row);
+      return (wordStatusMap[key] || "未测试") === "已测试";
+    });
+    if (!force && !allDone) {
+      return;
+    }
+    finishOnceRef.current = true;
+    api(`/api/recite/quizzes/${quiz.id}/finish`, { method: "POST" })
+      .then((data) => {
+        if (data.quiz && data.quiz.quiz) {
+          setQuiz(data.quiz.quiz);
+        }
+        if (onQuizStateChange) {
+          onQuizStateChange(false);
+        }
+      })
+      .catch((err) => setError(err.message));
+  }
+
   const stats = useMemo(() => {
     const total = words.length;
     let correct = 0;
     let forgotten = 0;
     words.forEach((row) => {
-      const status = resultMap[wordKey(row.word)];
+      const status = resultMap[wordKey(row)];
       if (status === "correct") {
         correct += 1;
       } else if (status === "forgotten") {
@@ -380,21 +475,105 @@ function DictationPanel({
   }, [words, resultMap]);
 
   useEffect(() => {
-    api(fetchPath)
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    setWords([]);
+    setQuiz(null);
+    setIndex(-1);
+    setShowAnswer(false);
+    setInputValue("");
+    setResultMap({});
+    setWordStatusMap({});
+    setSubmittedInputMap({});
+    finishOnceRef.current = false;
+
+    const promise = quizId
+      ? api(`/api/recite/quizzes/${quizId}`)
+      : api("/api/recite/quizzes/start", { method: "POST", body: startPayload || {} });
+
+    promise
       .then((data) => {
-        setWords(data.words || []);
-        setIndex(-1);
-        setShowAnswer(false);
-        setInputValue("");
-        setResultMap({});
-        setSubmittedInputMap({});
-        setError("");
+        if (cancelled) {
+          return;
+        }
+        const detail = data.quiz || {};
+        const quizInfo = detail.quiz || null;
+        const rows = (detail.words || []).map((item) => {
+          const wd = item.word_detail || {};
+          return {
+            ...wd,
+            seq: item.seq,
+            word_status: item.word_status || "未测试",
+            input_answer: item.input_answer || "",
+            quiz_result: item.result || "",
+          };
+        });
+
+        const nextResultMap = {};
+        const nextStatusMap = {};
+        const nextSubmittedMap = {};
+        rows.forEach((row) => {
+          const key = wordKey(row);
+          nextStatusMap[key] = row.word_status || "未测试";
+          nextSubmittedMap[key] = row.input_answer || "";
+          const localResult = serverResultToLocal(row.quiz_result || "");
+          if (localResult) {
+            nextResultMap[key] = localResult;
+          }
+        });
+
+        setQuiz(quizInfo);
+        if (onQuizStateChange && quizInfo) {
+          onQuizStateChange(quizInfo.status === "进行中");
+        }
+        setWords(rows);
+        setResultMap(nextResultMap);
+        setWordStatusMap(nextStatusMap);
+        setSubmittedInputMap(nextSubmittedMap);
+        setShowAnswer(Boolean(readOnly || (quizInfo && quizInfo.status === "已完结")));
+
+        if (rows.length === 0 || readOnly || (quizInfo && quizInfo.status === "已完结")) {
+          setIndex(-1);
+        } else if (quizInfo && quizInfo.next_seq > 0) {
+          const nextIdx = rows.findIndex((row) => Number(row.seq) === Number(quizInfo.next_seq));
+          if (nextIdx >= 0) {
+            setIndex(nextIdx);
+          } else {
+            setIndex(findFirstPendingIndex(rows, nextStatusMap));
+          }
+        } else {
+          setIndex(findFirstPendingIndex(rows, nextStatusMap));
+        }
       })
-      .catch((err) => setError(err.message));
-  }, [fetchPath]);
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err.message);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    quizId,
+    readOnly,
+    startPayload && startPayload.type,
+    startPayload && startPayload.source_kind,
+    startPayload && startPayload.unit_id,
+    startPayload && startPayload.review_date,
+  ]);
 
   useEffect(() => {
     function onKeyDown(e) {
+      if (!isDictation) {
+        return;
+      }
       if (e.key !== "Meta") {
         return;
       }
@@ -406,49 +585,121 @@ function DictationPanel({
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [index, words, playAudio, defaultAccent]);
+  }, [isDictation, index, words, playAudio, defaultAccent]);
 
-  function submitCurrentInput() {
+  useEffect(() => {
+    if (!isDictation || readOnly || loading) {
+      return;
+    }
     if (index < 0 || index >= words.length) {
       return;
     }
     const row = words[index];
-    const key = wordKey(row.word);
-    if (resultMap[key] === "forgotten") {
+    const key = wordKey(row);
+    if ((wordStatusMap[key] || "未测试") === "已测试") {
       return;
     }
-    setSubmittedInputMap((prev) => ({ ...prev, [key]: (inputValue || "").trim() }));
+    playAudio(getDefaultAudio(row, defaultAccent));
+  }, [isDictation, readOnly, loading, index, words, wordStatusMap, defaultAccent, playAudio]);
+
+  useEffect(() => {
+    if (readOnly || loading || !quiz || quiz.status === "已完结") {
+      return;
+    }
+    const allDone = words.length > 0 && words.every((row) => {
+      const key = wordKey(row);
+      return (wordStatusMap[key] || "未测试") === "已测试";
+    });
+    if (!allDone) {
+      return;
+    }
+    setShowAnswer(true);
+    setIndex(-1);
+    finishQuizIfNeeded();
+  }, [readOnly, loading, quiz && quiz.status, words, wordStatusMap]);
+
+  function submitCurrentInput() {
+    if (index < 0 || index >= words.length) {
+      return Promise.resolve(false);
+    }
+    if (!quiz || !quiz.id) {
+      return Promise.resolve(false);
+    }
+    const row = words[index];
+    const key = wordKey(row);
+    if ((wordStatusMap[key] || "未测试") === "已测试") {
+      return Promise.resolve(true);
+    }
+    const submittedInput = (inputValue || "").trim();
     const ok = normalizeWordText(inputValue) === normalizeWordText(row.word);
-    setResultMap((prev) => ({ ...prev, [key]: ok ? "correct" : "wrong" }));
+    const nextResult = ok ? "correct" : "wrong";
+    return api(`/api/recite/quizzes/${quiz.id}/words/${row.seq}/submit`, {
+      method: "POST",
+      body: {
+        input_answer: submittedInput,
+        result: localResultToServer(nextResult),
+      },
+    })
+      .then(() => {
+        markWordCompleted(row, nextResult, submittedInput);
+        return true;
+      })
+      .catch((err) => {
+        setError(err.message);
+        return false;
+      });
   }
 
   function readNext() {
+    if (readOnly || loading) {
+      return;
+    }
     if (showAnswer) {
       return;
     }
     if (words.length === 0) {
       setShowAnswer(true);
+      finishQuizIfNeeded(true);
       return;
     }
     if (index < 0) {
-      setIndex(0);
+      const nextIdx = findFirstPendingIndex(words, wordStatusMap);
+      if (nextIdx < 0) {
+        setShowAnswer(true);
+        finishQuizIfNeeded(true);
+        return;
+      }
+      setIndex(nextIdx);
       setInputValue("");
-      playAudio(getDefaultAudio(words[0], defaultAccent));
+      if (isDictation) {
+        playAudio(getDefaultAudio(words[nextIdx], defaultAccent));
+      }
       return;
     }
-    submitCurrentInput();
-    setInputValue("");
-    if (index + 1 >= words.length) {
-      setShowAnswer(true);
-      return;
-    }
-    const nextIndex = index + 1;
-    const row = words[nextIndex];
-    setIndex(nextIndex);
-    playAudio(getDefaultAudio(row, defaultAccent));
+    submitCurrentInput().then((ok) => {
+      if (!ok) {
+        return;
+      }
+      setInputValue("");
+      const nextIndex = findNextPendingIndex(words, { ...wordStatusMap, [wordKey(words[index])]: "已测试" }, index);
+      if (nextIndex < 0) {
+        setShowAnswer(true);
+        setIndex(-1);
+        finishQuizIfNeeded(true);
+        return;
+      }
+      const row = words[nextIndex];
+      setIndex(nextIndex);
+      if (isDictation) {
+        playAudio(getDefaultAudio(row, defaultAccent));
+      }
+    });
   }
 
   function repeatCurrent() {
+    if (!isDictation) {
+      return;
+    }
     if (index < 0 || index >= words.length) {
       return;
     }
@@ -457,60 +708,76 @@ function DictationPanel({
   }
 
   function operateCurrentAndSkip() {
-    if (index < 0 || index >= words.length || !onOperation) {
+    if (readOnly || index < 0 || index >= words.length || !onOperation || !quiz || !quiz.id) {
       return;
     }
     const row = words[index];
     onOperation(row.word)
       .then(() => {
-        setResultMap((prev) => ({ ...prev, [wordKey(row.word)]: "forgotten" }));
-        setInputValue("");
-        if (index + 1 >= words.length) {
-          setShowAnswer(true);
-          return;
-        }
-        const nextIndex = index + 1;
-        const next = words[nextIndex];
-        setIndex(nextIndex);
-        playAudio(getDefaultAudio(next, defaultAccent));
+        return api(`/api/recite/quizzes/${quiz.id}/words/${row.seq}/submit`, {
+          method: "POST",
+          body: {
+            input_answer: (inputValue || "").trim(),
+            result: "忘记",
+          },
+        }).then(() => {
+          markWordCompleted(row, "forgotten", (inputValue || "").trim());
+          setInputValue("");
+          const nextIndex = findNextPendingIndex(words, { ...wordStatusMap, [wordKey(row)]: "已测试" }, index);
+          if (nextIndex < 0) {
+            setShowAnswer(true);
+            setIndex(-1);
+            finishQuizIfNeeded(true);
+            return;
+          }
+          const next = words[nextIndex];
+          setIndex(nextIndex);
+          if (isDictation) {
+            playAudio(getDefaultAudio(next, defaultAccent));
+          }
+        });
       })
       .catch((err) => setError(err.message));
   }
 
-  function handleOperation(word) {
+  function handleOperation(word, targetRow) {
     if (!onOperation) {
       return;
     }
     onOperation(word)
       .then(() => {
-        setResultMap((prev) => ({ ...prev, [wordKey(word)]: "forgotten" }));
-        if (removeOnOperationSuccess) {
-          setWords((prev) => {
-            const next = prev.filter((item) => item.word !== word);
-            setIndex((old) => {
-              if (next.length === 0) {
-                return -1;
-              }
-              if (old < 0) {
-                return -1;
-              }
-              return Math.min(old, next.length - 1);
-            });
-            return next;
-          });
-          setResultMap((prev) => {
-            const next = { ...prev };
-            delete next[wordKey(word)];
-            return next;
-          });
-          setSubmittedInputMap((prev) => {
-            const next = { ...prev };
-            delete next[wordKey(word)];
-            return next;
-          });
+        const row = targetRow || words.find((item) => item.word === word);
+        if (!row || !quiz || !quiz.id) {
+          return;
         }
+        return api(`/api/recite/quizzes/${quiz.id}/words/${row.seq}/submit`, {
+          method: "POST",
+          body: {
+            input_answer: "",
+            result: "忘记",
+          },
+        }).then(() => {
+          markWordCompleted(row, "forgotten", "");
+        });
       })
       .catch((err) => setError(err.message));
+  }
+
+  const current = index >= 0 && index < words.length ? words[index] : null;
+  const currentMeaningLines = useMemo(() => {
+    if (!current) {
+      return [];
+    }
+    return formatMeaningLines(current.parts);
+  }, [current && current.word, current && current.parts]);
+
+  if (loading) {
+    return (
+      <div className="right-panel-inner">
+        <h2>{title}</h2>
+        <p className="helper-tip">加载中...</p>
+      </div>
+    );
   }
 
   return (
@@ -520,34 +787,52 @@ function DictationPanel({
         <div className="progress">
           当前进度：{Math.max(index + 1, 0)} / {words.length}
         </div>
-        <div className="dictation-input-row">
-          <input
-            className="input dictation-input"
-            placeholder="输入听到的单词"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                readNext();
-              }
-            }}
-          />
-        </div>
-        <div className="dictation-actions">
-          <button className="btn brand" onClick={readNext}>读下一单词</button>
-          <button className="btn" onClick={repeatCurrent}>重复当前单词</button>
-          <button className="btn" onClick={operateCurrentAndSkip}>{operationLabel}</button>
-          <button className="btn secondary" onClick={() => setShowAnswer((v) => !v)}>
-            {showAnswer ? "隐藏答案" : "显示答案"}
-          </button>
-          <button className="btn secondary" onClick={onBack}>返回列表</button>
-        </div>
+        {!readOnly && (
+          <>
+            {quizType === "默写" && current && (
+              <div className="quiz-current-meaning">
+                {currentMeaningLines.length > 0 ? currentMeaningLines.map((line, idx) => (
+                  <div key={`${current.word}-desktop-meaning-${idx}`}>{line}</div>
+                )) : <div>-</div>}
+              </div>
+            )}
+            <div className="dictation-input-row">
+              <input
+                className="input dictation-input"
+                placeholder={isDictation ? "输入听到的单词" : "输入单词"}
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    readNext();
+                  }
+                }}
+              />
+            </div>
+            <div className="dictation-actions">
+              <button className="btn brand" onClick={readNext}>
+                {index < 0 ? "开始测试" : "确认并下一单词"}
+              </button>
+              {isDictation && <button className="btn" onClick={repeatCurrent}>重复当前单词</button>}
+              <button className="btn" onClick={operateCurrentAndSkip}>{operationLabel}</button>
+              <button className="btn secondary" onClick={() => setShowAnswer((v) => !v)}>
+                {showAnswer ? "隐藏答案" : "显示答案"}
+              </button>
+              <button className="btn secondary" onClick={onBack}>返回列表</button>
+            </div>
+          </>
+        )}
+        {readOnly && (
+          <div className="dictation-actions">
+            <button className="btn secondary" onClick={onBack}>返回列表</button>
+          </div>
+        )}
         {error && <div className="error">{error}</div>}
       </div>
       {showAnswer && (
         <div style={{ marginTop: "14px" }}>
           <div className="quiz-stat-line">
-            测验结果：共听写单词 {stats.total} 个，正确 {stats.correct} 个，错误 {stats.wrong} 个，忘记 {stats.forgotten} 个
+            测验结果：共{quizType}单词 {stats.total} 个，正确 {stats.correct} 个，错误 {stats.wrong} 个，忘记 {stats.forgotten} 个
           </div>
           <WordTable
             rows={words}
@@ -555,7 +840,7 @@ function DictationPanel({
             operationLabel={operationLabel}
             onOperation={handleOperation}
             resultResolver={(row) => {
-              const key = wordKey(row.word);
+              const key = wordKey(row);
               const status = resultMap[key] || "wrong";
               return resultMeta(status, submittedInputMap[key]);
             }}
@@ -566,183 +851,11 @@ function DictationPanel({
   );
 }
 
-function SpellingPanel({ title, fetchPath, onBack, operationLabel, onOperation, removeOnOperationSuccess }) {
-  const playAudio = useAudioPlayer();
-  const [words, setWords] = useState([]);
-  const [showAnswer, setShowAnswer] = useState(false);
-  const [inputMap, setInputMap] = useState({});
-  const inputRefs = useRef([]);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    api(fetchPath)
-      .then((data) => {
-        setWords(data.words || []);
-        setShowAnswer(false);
-        setInputMap({});
-        setError("");
-      })
-      .catch((err) => setError(err.message));
-  }, [fetchPath]);
-
-  const stats = useMemo(() => {
-    const total = words.length;
-    let correct = 0;
-    words.forEach((row) => {
-      if (normalizeWordText(inputMap[row.word]) === normalizeWordText(row.word)) {
-        correct += 1;
-      }
-    });
-    return { total, correct, wrong: Math.max(total - correct, 0) };
-  }, [words, inputMap]);
-
-  function spellingResultMeta(row) {
-    const ok = normalizeWordText(inputMap[row.word]) === normalizeWordText(row.word);
-    return ok
-      ? { text: "正确", className: "correct" }
-      : { text: "错误", className: "wrong" };
-  }
-
-  function focusInputByIndex(nextIdx) {
-    if (nextIdx < 0 || nextIdx >= words.length) {
-      return;
-    }
-    const target = inputRefs.current[nextIdx];
-    if (target) {
-      target.focus();
-      target.select();
-    }
-  }
-
-  function handleOperation(word) {
-    if (!onOperation) {
-      return;
-    }
-    onOperation(word)
-      .then(() => {
-        if (removeOnOperationSuccess) {
-          setWords((prev) => prev.filter((item) => item.word !== word));
-          setInputMap((prev) => {
-            const next = { ...prev };
-            delete next[word];
-            return next;
-          });
-        }
-      })
-      .catch((err) => setError(err.message));
-  }
-
-  return (
-    <div className="right-panel-inner">
-      <h2>{title}</h2>
-      <div className="dictation-box">
-        <div className="dictation-actions">
-          <button className="btn brand" onClick={() => setShowAnswer((v) => !v)}>
-            {showAnswer ? "隐藏答案" : "查看答案"}
-          </button>
-          <button className="btn secondary" onClick={onBack}>返回列表</button>
-        </div>
-        {error && <div className="error">{error}</div>}
-      </div>
-
-      {showAnswer && (
-        <div className="quiz-stat-line">
-          测验结果：共默写单词 {stats.total} 个，正确 {stats.correct} 个，错误 {stats.wrong} 个
-        </div>
-      )}
-
-      <table className="word-table" style={{ marginTop: "14px" }}>
-        <thead>
-          <tr>
-            <th style={{ width: "64px" }}>编号</th>
-            <th>释义</th>
-            <th style={{ width: "220px" }}>输入</th>
-            {showAnswer && <th style={{ width: "92px" }}>结果</th>}
-            {showAnswer && <th style={{ width: "180px" }}>单词</th>}
-            {showAnswer && <th style={{ width: "220px" }}>音标</th>}
-            {showAnswer && operationLabel && <th style={{ width: "100px" }}>操作</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {words.map((row, idx) => (
-            <tr key={`${row.word}-${idx}`}>
-              <td>{idx + 1}</td>
-              <td><MeaningCell parts={row.parts} /></td>
-              <td>
-                <input
-                  className="input spelling-input"
-                  value={inputMap[row.word] || ""}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setInputMap((prev) => ({ ...prev, [row.word]: value }));
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      focusInputByIndex(idx + 1);
-                    }
-                  }}
-                  ref={(el) => {
-                    inputRefs.current[idx] = el;
-                  }}
-                />
-              </td>
-              {showAnswer && (
-                <td>
-                  <span className={`quiz-result-text ${spellingResultMeta(row).className}`}>
-                    {spellingResultMeta(row).text}
-                  </span>
-                </td>
-              )}
-              {showAnswer && <td>{row.word}</td>}
-              {showAnswer && (
-                <td>
-                  <div className="yinbiao-row">
-                    <span>英音：[{row.ph_en || "-"}]</span>
-                    <a
-                      className="play-icon-link"
-                      href="#"
-                      onMouseEnter={() => playAudio(row.en_audio)}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        playAudio(row.en_audio);
-                      }}
-                    >
-                      {"\u25B6"}
-                    </a>
-                  </div>
-                  <div className="yinbiao-row">
-                    <span>美音：[{row.ph_am || "-"}]</span>
-                    <a
-                      className="play-icon-link"
-                      href="#"
-                      onMouseEnter={() => playAudio(row.am_audio || row.en_audio)}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        playAudio(row.am_audio || row.en_audio);
-                      }}
-                    >
-                      {"\u25B6"}
-                    </a>
-                  </div>
-                </td>
-              )}
-              {showAnswer && operationLabel && (
-                <td>
-                  <button className="btn" onClick={() => handleOperation(row.word)}>
-                    {operationLabel}
-                  </button>
-                </td>
-              )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+function SpellingPanel(props) {
+  return <DictationPanel {...props} quizType="默写" />;
 }
 
-function ReciteUnitPanel({ unit, notify, defaultAccent }) {
+function ReciteUnitPanel({ unit, notify, defaultAccent, onQuizStateChange }) {
   const playAudio = useAudioPlayer();
   const [view, setView] = useState("detail");
   const [wordInput, setWordInput] = useState("");
@@ -805,11 +918,17 @@ function ReciteUnitPanel({ unit, notify, defaultAccent }) {
     return (
       <DictationPanel
         title="听写单词"
-        fetchPath={`/api/recite/units/${unit.id}/dictation`}
+        quizType="读写"
+        startPayload={{
+          type: "读写",
+          source_kind: "unit",
+          unit_id: unit.id,
+          review_date: "",
+        }}
         operationLabel="忘记"
         onOperation={forgetWord}
-        removeOnOperationSuccess={false}
         defaultAccent={defaultAccent}
+        onQuizStateChange={onQuizStateChange}
         onBack={() => setView("detail")}
       />
     );
@@ -818,10 +937,16 @@ function ReciteUnitPanel({ unit, notify, defaultAccent }) {
     return (
       <SpellingPanel
         title="默写单词"
-        fetchPath={`/api/recite/units/${unit.id}/dictation`}
+        startPayload={{
+          type: "默写",
+          source_kind: "unit",
+          unit_id: unit.id,
+          review_date: "",
+        }}
         operationLabel="忘记"
         onOperation={forgetWord}
-        removeOnOperationSuccess={false}
+        defaultAccent={defaultAccent}
+        onQuizStateChange={onQuizStateChange}
         onBack={() => setView("detail")}
       />
     );
@@ -930,7 +1055,7 @@ function ReciteUnitPanel({ unit, notify, defaultAccent }) {
   );
 }
 
-function ForgottenPanel({ notify, defaultAccent }) {
+function ForgottenPanel({ notify, defaultAccent, onQuizStateChange }) {
   const playAudio = useAudioPlayer();
   const [view, setView] = useState("detail");
   const [wordRows, setWordRows] = useState([]);
@@ -962,11 +1087,17 @@ function ForgottenPanel({ notify, defaultAccent }) {
     return (
       <DictationPanel
         title="听写单词（遗忘单词）"
-        fetchPath="/api/recite/forgotten/dictation"
+        quizType="读写"
+        startPayload={{
+          type: "读写",
+          source_kind: "forgotten",
+          unit_id: 0,
+          review_date: "",
+        }}
         operationLabel="记住"
         onOperation={rememberWord}
-        removeOnOperationSuccess={true}
         defaultAccent={defaultAccent}
+        onQuizStateChange={onQuizStateChange}
         onBack={() => {
           setView("detail");
           loadWords().catch((err) => setError(err.message));
@@ -978,10 +1109,16 @@ function ForgottenPanel({ notify, defaultAccent }) {
     return (
       <SpellingPanel
         title="默写单词（遗忘单词）"
-        fetchPath="/api/recite/forgotten/dictation"
+        startPayload={{
+          type: "默写",
+          source_kind: "forgotten",
+          unit_id: 0,
+          review_date: "",
+        }}
         operationLabel="记住"
         onOperation={rememberWord}
-        removeOnOperationSuccess={true}
+        defaultAccent={defaultAccent}
+        onQuizStateChange={onQuizStateChange}
         onBack={() => {
           setView("detail");
           loadWords().catch((err) => setError(err.message));
@@ -1026,6 +1163,7 @@ function ReviewPanel({
   reviewDates,
   selectedReviewDate,
   onReviewDateChange,
+  onQuizStateChange,
 }) {
   const playAudio = useAudioPlayer();
   const [view, setView] = useState("detail");
@@ -1069,11 +1207,17 @@ function ReviewPanel({
     return (
       <DictationPanel
         title="听写单词（今日复习）"
-        fetchPath={`/api/recite/review/dictation${query}`}
+        quizType="读写"
+        startPayload={{
+          type: "读写",
+          source_kind: "review",
+          unit_id: 0,
+          review_date: selectedReviewDate || "",
+        }}
         operationLabel="忘记"
         onOperation={forgetWord}
-        removeOnOperationSuccess={false}
         defaultAccent={defaultAccent}
+        onQuizStateChange={onQuizStateChange}
         onBack={() => setView("detail")}
       />
     );
@@ -1082,10 +1226,16 @@ function ReviewPanel({
     return (
       <SpellingPanel
         title="默写单词（今日复习）"
-        fetchPath={`/api/recite/review/dictation${query}`}
+        startPayload={{
+          type: "默写",
+          source_kind: "review",
+          unit_id: 0,
+          review_date: selectedReviewDate || "",
+        }}
         operationLabel="忘记"
         onOperation={forgetWord}
-        removeOnOperationSuccess={false}
+        defaultAccent={defaultAccent}
+        onQuizStateChange={onQuizStateChange}
         onBack={() => setView("detail")}
       />
     );
@@ -1137,6 +1287,141 @@ function ReviewPanel({
   );
 }
 
+function QuizListPanel({ notify, defaultAccent, onQuizStateChange }) {
+  const [view, setView] = useState("list");
+  const [rows, setRows] = useState([]);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [activeItem, setActiveItem] = useState(null);
+
+  function loadList(nextPage = 1) {
+    setLoading(true);
+    setError("");
+    return api(`/api/recite/quizzes?page=${Math.max(nextPage, 1)}&page_size=20`)
+      .then((data) => {
+        setRows(data.items || []);
+        setTotal(Number(data.total) || 0);
+        setPage(Math.max(Number(data.page) || nextPage, 1));
+        if (onQuizStateChange) {
+          onQuizStateChange(Boolean(data.has_running));
+        }
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    setView("list");
+    setActiveItem(null);
+    loadList(1);
+  }, []);
+
+  function forgetWord(word) {
+    return api("/api/recite/forgotten/words", {
+      method: "POST",
+      body: { word },
+    }).then(() => {
+      if (notify) {
+        notify("已添加到遗忘单词本");
+      }
+    });
+  }
+
+  function rememberWord(word) {
+    return api("/api/recite/forgotten/words/remember", {
+      method: "POST",
+      body: { word },
+    }).then(() => {
+      if (notify) {
+        notify("已标记为记住");
+      }
+    });
+  }
+
+  if (view === "quiz" && activeItem) {
+    const isSpelling = activeItem.type === "默写";
+    const readOnly = activeItem.status !== "进行中";
+    const opLabel = activeItem.source === "forgotten" ? "记住" : "忘记";
+    const opAction = activeItem.source === "forgotten" ? rememberWord : forgetWord;
+    const title = readOnly ? activeItem.title : `${activeItem.title}（进行中）`;
+    const panelProps = {
+      title,
+      quizId: activeItem.id,
+      operationLabel: readOnly ? "" : opLabel,
+      onOperation: readOnly ? null : opAction,
+      defaultAccent,
+      readOnly,
+      onQuizStateChange,
+      onBack: () => {
+        setView("list");
+        setActiveItem(null);
+        loadList(page);
+      },
+    };
+    if (isSpelling) {
+      return <SpellingPanel {...panelProps} />;
+    }
+    return <DictationPanel {...panelProps} quizType="读写" />;
+  }
+
+  const totalPages = Math.max(Math.ceil(total / 20), 1);
+  return (
+    <div className="right-panel-inner">
+      <h2>测试列表</h2>
+      {error && <div className="error">{error}</div>}
+      {loading && <p className="helper-tip">加载中...</p>}
+      {!loading && rows.length === 0 && <p className="helper-tip">暂无测试记录。</p>}
+      {!loading && rows.length > 0 && (
+        <table className="word-table">
+          <thead>
+            <tr>
+              <th style={{ width: "56px" }}>序号</th>
+              <th>标题</th>
+              <th style={{ width: "110px" }}>状态</th>
+              <th style={{ width: "200px" }}>统计</th>
+              <th style={{ width: "180px" }}>创建时间</th>
+              <th style={{ width: "100px" }}>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((item, idx) => (
+              <tr key={item.id}>
+                <td>{(page - 1) * 20 + idx + 1}</td>
+                <td>{item.status === "进行中" ? `${item.title}（进行中）` : item.title}</td>
+                <td>{item.status}</td>
+                <td>
+                  共{item.stats.total}，已测{item.stats.tested}，正确{item.stats.correct}，错误{item.stats.wrong}，忘记{item.stats.forgotten}
+                </td>
+                <td>{item.created_at}</td>
+                <td>
+                  <button
+                    className="btn secondary"
+                    onClick={() => {
+                      setActiveItem(item);
+                      setView("quiz");
+                    }}
+                  >
+                    {item.status === "进行中" ? "继续测试" : "查看结果"}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {!loading && totalPages > 1 && (
+        <div className="dictation-actions">
+          <button className="btn secondary" disabled={page <= 1} onClick={() => loadList(page - 1)}>上一页</button>
+          <div>{page}/{totalPages}</div>
+          <button className="btn secondary" disabled={page >= totalPages} onClick={() => loadList(page + 1)}>下一页</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MobileWordDetailBody({ row, playAudio }) {
   if (!row) {
     return null;
@@ -1183,25 +1468,79 @@ function MobileWordDetailBody({ row, playAudio }) {
 function MobileQuizPanel({
   title,
   type,
-  fetchPath,
+  startPayload,
+  quizId,
   onBack,
   operationLabel,
   onOperation,
   defaultAccent,
+  readOnly = false,
+  onQuizStateChange,
 }) {
   const playAudio = useAudioPlayer();
+  const finishOnceRef = useRef(false);
   const inputRef = useRef(null);
+  const [quiz, setQuiz] = useState(null);
   const [words, setWords] = useState([]);
   const [index, setIndex] = useState(0);
   const [inputValue, setInputValue] = useState("");
   const [revealed, setRevealed] = useState(false);
   const [result, setResult] = useState("");
   const [statusMap, setStatusMap] = useState({});
+  const [wordStatusMap, setWordStatusMap] = useState({});
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [finished, setFinished] = useState(false);
   const [detailWord, setDetailWord] = useState(null);
   const current = words[index] || null;
+
+  function rowKey(row) {
+    return Number(row && row.seq) || 0;
+  }
+
+  function findFirstPendingIndex(rows, stateMap) {
+    for (let i = 0; i < rows.length; i += 1) {
+      const key = rowKey(rows[i]);
+      if ((stateMap[key] || "未测试") !== "已测试") {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  function findNextPendingIndex(rows, stateMap, fromIdx) {
+    for (let i = fromIdx + 1; i < rows.length; i += 1) {
+      const key = rowKey(rows[i]);
+      if ((stateMap[key] || "未测试") !== "已测试") {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  function finishQuizIfNeeded(force = false) {
+    if (!quiz || !quiz.id || readOnly || finishOnceRef.current) {
+      return;
+    }
+    const allDone = words.length > 0 && words.every((row) => {
+      const key = rowKey(row);
+      return (wordStatusMap[key] || "未测试") === "已测试";
+    });
+    if (!force && !allDone) {
+      return;
+    }
+    finishOnceRef.current = true;
+    api(`/api/recite/quizzes/${quiz.id}/finish`, { method: "POST" })
+      .then((data) => {
+        if (data.quiz && data.quiz.quiz) {
+          setQuiz(data.quiz.quiz);
+        }
+        if (onQuizStateChange) {
+          onQuizStateChange(false);
+        }
+      })
+      .catch((err) => setError(err.message));
+  }
 
   const stats = useMemo(() => {
     const total = words.length;
@@ -1209,7 +1548,8 @@ function MobileQuizPanel({
     let wrong = 0;
     let operated = 0;
     for (let i = 0; i < words.length; i += 1) {
-      const status = statusMap[i];
+      const key = rowKey(words[i]);
+      const status = statusMap[key];
       if (status === "correct") {
         correct += 1;
       } else if (status === "wrong") {
@@ -1242,7 +1582,8 @@ function MobileQuizPanel({
   const incorrectRows = useMemo(() => {
     const ret = [];
     for (let i = 0; i < words.length; i += 1) {
-      const status = statusMap[i];
+      const key = rowKey(words[i]);
+      const status = statusMap[key];
       if (status === "wrong" || status === "operated") {
         ret.push({
           row: words[i],
@@ -1255,29 +1596,94 @@ function MobileQuizPanel({
   }, [words, statusMap]);
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setError("");
-    api(fetchPath)
+    setQuiz(null);
+    finishOnceRef.current = false;
+    const promise = quizId
+      ? api(`/api/recite/quizzes/${quizId}`)
+      : api("/api/recite/quizzes/start", { method: "POST", body: startPayload || {} });
+    promise
       .then((data) => {
-        const rows = data.words || [];
+        if (cancelled) {
+          return;
+        }
+        const detail = data.quiz || {};
+        const quizInfo = detail.quiz || null;
+        const rows = (detail.words || []).map((item) => {
+          const wd = item.word_detail || {};
+          return {
+            ...wd,
+            seq: item.seq,
+            word_status: item.word_status || "未测试",
+            input_answer: item.input_answer || "",
+            quiz_result: item.result || "",
+          };
+        });
+        const nextStatusMap = {};
+        const nextWordStatusMap = {};
+        rows.forEach((row) => {
+          const key = rowKey(row);
+          nextWordStatusMap[key] = row.word_status || "未测试";
+          if (row.quiz_result === "正确") {
+            nextStatusMap[key] = "correct";
+          } else if (row.quiz_result === "错误") {
+            nextStatusMap[key] = "wrong";
+          } else if (row.quiz_result === "忘记") {
+            nextStatusMap[key] = "operated";
+          }
+        });
+
+        setQuiz(quizInfo);
+        if (onQuizStateChange && quizInfo) {
+          onQuizStateChange(quizInfo.status === "进行中");
+        }
         setWords(rows);
-        setIndex(0);
+        setStatusMap(nextStatusMap);
+        setWordStatusMap(nextWordStatusMap);
         setInputValue("");
         setRevealed(false);
         setResult("");
-        setStatusMap({});
-        setFinished(rows.length === 0);
+        const isFinished = Boolean(readOnly || (quizInfo && quizInfo.status === "已完结"));
+        if (isFinished || rows.length === 0) {
+          setIndex(0);
+        } else if (quizInfo && quizInfo.next_seq > 0) {
+          const nextIdx = rows.findIndex((row) => Number(row.seq) === Number(quizInfo.next_seq));
+          if (nextIdx >= 0) {
+            setIndex(nextIdx);
+          } else {
+            setIndex(findFirstPendingIndex(rows, nextWordStatusMap));
+          }
+        } else {
+          setIndex(findFirstPendingIndex(rows, nextWordStatusMap));
+        }
+        setFinished(isFinished || rows.length === 0);
         setDetailWord(null);
       })
       .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }, [fetchPath]);
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    quizId,
+    readOnly,
+    startPayload && startPayload.type,
+    startPayload && startPayload.source_kind,
+    startPayload && startPayload.unit_id,
+    startPayload && startPayload.review_date,
+  ]);
 
   useEffect(() => {
-    if (type === "dictation" && current && !revealed) {
+    if (type === "dictation" && current && !revealed && !readOnly) {
       playAudio(getDefaultAudio(current, defaultAccent));
     }
-  }, [type, current && current.word, revealed, defaultAccent, playAudio]);
+  }, [type, current && current.word, revealed, readOnly, defaultAccent, playAudio]);
 
   useEffect(() => {
     if (loading || finished || !current || revealed) {
@@ -1291,19 +1697,25 @@ function MobileQuizPanel({
   function goNext() {
     if (!current) {
       setFinished(true);
+      finishQuizIfNeeded(true);
       return;
     }
-    if (index + 1 >= words.length) {
+    const nextIndex = findNextPendingIndex(words, wordStatusMap, index);
+    if (nextIndex < 0) {
       setFinished(true);
+      finishQuizIfNeeded(true);
       return;
     }
-    setIndex((prev) => prev + 1);
+    setIndex(nextIndex);
     setInputValue("");
     setRevealed(false);
     setResult("");
   }
 
   function submitOrNext() {
+    if (readOnly || !quiz || !quiz.id) {
+      return;
+    }
     if (!current) {
       return;
     }
@@ -1311,30 +1723,75 @@ function MobileQuizPanel({
       goNext();
       return;
     }
+    const submittedInput = (inputValue || "").trim();
     const ok = normalizeWordText(inputValue) === normalizeWordText(current.word);
-    setStatusMap((prev) => ({ ...prev, [index]: ok ? "correct" : "wrong" }));
-    setResult(ok ? "correct" : "wrong");
-    setRevealed(true);
-    if (type === "spelling") {
-      playAudio(getDefaultAudio(current, defaultAccent));
-    }
+    const nextResult = ok ? "correct" : "wrong";
+    api(`/api/recite/quizzes/${quiz.id}/words/${current.seq}/submit`, {
+      method: "POST",
+      body: {
+        input_answer: submittedInput,
+        result: ok ? "正确" : "错误",
+      },
+    })
+      .then(() => {
+        const key = rowKey(current);
+        setStatusMap((prev) => ({ ...prev, [key]: nextResult }));
+        setWordStatusMap((prev) => ({ ...prev, [key]: "已测试" }));
+        setWords((prev) => prev.map((row) => (
+          rowKey(row) === key ? { ...row, word_status: "已测试", input_answer: submittedInput, quiz_result: ok ? "正确" : "错误" } : row
+        )));
+        setResult(nextResult);
+        setRevealed(true);
+        if (type === "spelling") {
+          playAudio(getDefaultAudio(current, defaultAccent));
+        }
+      })
+      .catch((err) => setError(err.message));
   }
 
   function handleOperation() {
-    if (!current || !onOperation) {
+    if (readOnly || !current || !onOperation || !quiz || !quiz.id) {
       return;
     }
     const shouldCountAsOperate = !revealed;
     onOperation(current.word)
       .then(() => {
-        if (shouldCountAsOperate) {
-          setStatusMap((prev) => ({ ...prev, [index]: "operated" }));
-          setResult("operated");
-        }
-        setRevealed(true);
+        return api(`/api/recite/quizzes/${quiz.id}/words/${current.seq}/submit`, {
+          method: "POST",
+          body: {
+            input_answer: (inputValue || "").trim(),
+            result: "忘记",
+          },
+        }).then(() => {
+          if (shouldCountAsOperate) {
+            const key = rowKey(current);
+            setStatusMap((prev) => ({ ...prev, [key]: "operated" }));
+            setWordStatusMap((prev) => ({ ...prev, [key]: "已测试" }));
+            setWords((prev) => prev.map((row) => (
+              rowKey(row) === key ? { ...row, word_status: "已测试", input_answer: (inputValue || "").trim(), quiz_result: "忘记" } : row
+            )));
+            setResult("operated");
+          }
+          setRevealed(true);
+        });
       })
       .catch((err) => setError(err.message));
   }
+
+  useEffect(() => {
+    if (readOnly || loading || !quiz || quiz.status === "已完结") {
+      return;
+    }
+    const allDone = words.length > 0 && words.every((row) => {
+      const key = rowKey(row);
+      return (wordStatusMap[key] || "未测试") === "已测试";
+    });
+    if (!allDone) {
+      return;
+    }
+    setFinished(true);
+    finishQuizIfNeeded();
+  }, [readOnly, loading, quiz && quiz.status, words, wordStatusMap]);
 
   if (loading) {
     return (
@@ -1487,10 +1944,10 @@ function MobileQuizPanel({
         </div>
 
         <div className="mobile-quiz-actions">
-          <button className="btn secondary" onClick={submitOrNext}>
+          <button className="btn secondary" onClick={submitOrNext} disabled={readOnly}>
             {revealed ? "下一个" : "确认"}
           </button>
-          <button className="btn secondary" onClick={handleOperation}>
+          <button className="btn secondary" onClick={handleOperation} disabled={readOnly}>
             {operationLabel}
           </button>
         </div>
@@ -1521,6 +1978,8 @@ function MobileReciteRoot({
   reviewDates,
   selectedReviewDate,
   onReviewDateChange,
+  quizHasRunning,
+  onQuizStateChange,
 }) {
   const playAudio = useAudioPlayer();
   const [view, setView] = useState("home");
@@ -1534,6 +1993,11 @@ function MobileReciteRoot({
   const [words, setWords] = useState([]);
   const [reviewUnits, setReviewUnits] = useState([]);
   const [selectedWord, setSelectedWord] = useState(null);
+  const [quizRows, setQuizRows] = useState([]);
+  const [quizPage, setQuizPage] = useState(1);
+  const [quizTotal, setQuizTotal] = useState(0);
+  const [quizListLoading, setQuizListLoading] = useState(false);
+  const [activeQuizItem, setActiveQuizItem] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [unitMetaExpanded, setUnitMetaExpanded] = useState(false);
@@ -1850,6 +2314,28 @@ function MobileReciteRoot({
     pushNavState("unit", nextContext, null, 0, 0, false);
   }
 
+  function loadQuizList(page = 1) {
+    setQuizListLoading(true);
+    setError("");
+    return api(`/api/recite/quizzes?page=${Math.max(page, 1)}&page_size=20`)
+      .then((data) => {
+        setQuizRows(data.items || []);
+        setQuizTotal(Number(data.total) || 0);
+        setQuizPage(Math.max(Number(data.page) || page, 1));
+        if (onQuizStateChange) {
+          onQuizStateChange(Boolean(data.has_running));
+        }
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setQuizListLoading(false));
+  }
+
+  function openQuizList() {
+    setActiveQuizItem(null);
+    setView("quiz_list");
+    loadQuizList(1);
+  }
+
   function forgetWord(word) {
     return api("/api/recite/forgotten/words", {
       method: "POST",
@@ -1895,40 +2381,117 @@ function MobileReciteRoot({
   const topMetaCountText = `共${words.length}个单词`;
 
   if (view === "quiz_dictation") {
-    const fetchPath = context.kind === "forgotten"
-      ? "/api/recite/forgotten/dictation"
-      : (context.kind === "review"
-        ? `/api/recite/review/dictation${buildReviewQuery(context.reviewDate)}`
-        : `/api/recite/units/${context.unitId}/dictation`);
     return (
       <MobileQuizPanel
         title={`${context.name} 听写`}
         type="dictation"
-        fetchPath={fetchPath}
+        startPayload={{
+          type: "读写",
+          source_kind: context.kind === "forgotten" ? "forgotten" : (context.kind === "review" ? "review" : "unit"),
+          unit_id: context.kind === "unit" ? context.unitId : 0,
+          review_date: context.kind === "review" ? (context.reviewDate || "") : "",
+        }}
         operationLabel={opLabel}
         onOperation={opAction}
         defaultAccent={defaultAccent}
+        onQuizStateChange={onQuizStateChange}
         onBack={goBack}
       />
     );
   }
 
   if (view === "quiz_spelling") {
-    const fetchPath = context.kind === "forgotten"
-      ? "/api/recite/forgotten/dictation"
-      : (context.kind === "review"
-        ? `/api/recite/review/dictation${buildReviewQuery(context.reviewDate)}`
-        : `/api/recite/units/${context.unitId}/dictation`);
     return (
       <MobileQuizPanel
         title={`${context.name} 默写`}
         type="spelling"
-        fetchPath={fetchPath}
+        startPayload={{
+          type: "默写",
+          source_kind: context.kind === "forgotten" ? "forgotten" : (context.kind === "review" ? "review" : "unit"),
+          unit_id: context.kind === "unit" ? context.unitId : 0,
+          review_date: context.kind === "review" ? (context.reviewDate || "") : "",
+        }}
         operationLabel={opLabel}
         onOperation={opAction}
         defaultAccent={defaultAccent}
+        onQuizStateChange={onQuizStateChange}
         onBack={goBack}
       />
+    );
+  }
+
+  if (view === "quiz_item" && activeQuizItem) {
+    const isSpelling = activeQuizItem.type === "默写";
+    const itemOpLabel = activeQuizItem.source === "forgotten" ? "记住" : "忘记";
+    const itemOpAction = activeQuizItem.source === "forgotten" ? rememberWord : forgetWord;
+    const itemTitle = activeQuizItem.status === "进行中"
+      ? `${activeQuizItem.title}（进行中）`
+      : activeQuizItem.title;
+    return (
+      <MobileQuizPanel
+        title={itemTitle}
+        type={isSpelling ? "spelling" : "dictation"}
+        quizId={activeQuizItem.id}
+        operationLabel={itemOpLabel}
+        onOperation={itemOpAction}
+        defaultAccent={defaultAccent}
+        readOnly={activeQuizItem.status !== "进行中"}
+        onQuizStateChange={onQuizStateChange}
+        onBack={() => {
+          setActiveQuizItem(null);
+          setView("quiz_list");
+          loadQuizList(quizPage);
+        }}
+      />
+    );
+  }
+
+  if (view === "quiz_list") {
+    const totalPages = Math.max(Math.ceil(quizTotal / 20), 1);
+    return (
+      <div className="mobile-page-card">
+        <div className="mobile-topbar">
+          <button className="mobile-back-btn" onClick={() => setView("home")}>{"< 退出"}</button>
+          <h2 className="mobile-page-title">测试列表</h2>
+          <div />
+        </div>
+        {error && <div className="error">{error}</div>}
+        {quizListLoading && <div className="helper-tip">加载中...</div>}
+        {!quizListLoading && quizRows.length === 0 && <div className="helper-tip">暂无测试记录</div>}
+        {!quizListLoading && quizRows.map((item) => (
+          <div key={item.id} className="mobile-word-item">
+            <div className="mobile-word-item-head mobile-word-item-head-finished">
+              <button
+                className="mobile-word-open-btn"
+                onClick={() => {
+                  setActiveQuizItem(item);
+                  setView("quiz_item");
+                }}
+              >
+                {item.status === "进行中" ? `${item.title}（进行中）` : item.title}
+              </button>
+              <div className="mobile-word-item-right-meta">
+                <span className="mobile-word-item-no-inline">{item.created_at}</span>
+                <span className={`mobile-word-item-status ${item.status === "进行中" ? "operated" : "wrong"}`}>
+                  {item.status}
+                </span>
+              </div>
+            </div>
+            <div className="mobile-word-item-mean">
+              <div className="mobile-word-item-mean-line">
+                共{item.stats.total}个，已测{item.stats.tested}个，正确{item.stats.correct}个，错误{item.stats.wrong}个，忘记{item.stats.forgotten}个
+              </div>
+            </div>
+          </div>
+        ))}
+        {!quizListLoading && totalPages > 1 && (
+          <div className="dictation-actions">
+            <button className="btn secondary" disabled={quizPage <= 1} onClick={() => loadQuizList(quizPage - 1)}>上一页</button>
+            <div>{quizPage}/{totalPages}</div>
+            <button className="btn secondary" disabled={quizPage >= totalPages} onClick={() => loadQuizList(quizPage + 1)}>下一页</button>
+          </div>
+        )}
+      </div>
     );
   }
 
@@ -2107,6 +2670,11 @@ function MobileReciteRoot({
           <button className="mobile-home-item" onClick={openForgotten}>遗忘单词</button>
         </li>
         <li>
+          <button className="mobile-home-item" onClick={openQuizList}>
+            测试列表{quizHasRunning ? "（进行中）" : ""}
+          </button>
+        </li>
+        <li>
           <button className="mobile-home-item" onClick={openReview}>今日复习</button>
         </li>
         {units.map((unit) => (
@@ -2142,7 +2710,9 @@ function SidebarRecite({
   selectedUnitId,
   onSelectUnit,
   onSelectForgotten,
+  onSelectQuizList,
   onSelectReview,
+  quizHasRunning,
   onCreateUnit,
   onRenameUnit,
   onDeleteUnit,
@@ -2292,6 +2862,16 @@ function SidebarRecite({
         <li className="unit-row-wrap">
           <div className="unit-item-row">
             <button
+              className={`unit-item unit-main-btn ${selectedType === "quiz_list" ? "active" : ""}`}
+              onClick={onSelectQuizList}
+            >
+              测试列表{quizHasRunning ? "（进行中）" : ""}
+            </button>
+          </div>
+        </li>
+        <li className="unit-row-wrap">
+          <div className="unit-item-row">
+            <button
               className={`unit-item unit-main-btn ${selectedType === "review" ? "active" : ""}`}
               onClick={onSelectReview}
             >
@@ -2422,6 +3002,7 @@ function App() {
   const [defaultAccent, setDefaultAccent] = useState("en");
   const [reviewDates, setReviewDates] = useState([]);
   const [selectedReviewDate, setSelectedReviewDate] = useState("");
+  const [quizHasRunning, setQuizHasRunning] = useState(false);
 
   function notify(text) {
     setToast({ visible: true, text, ts: Date.now() });
@@ -2485,6 +3066,20 @@ function App() {
 
   useEffect(() => {
     loadReviewDates();
+  }, []);
+
+  function loadQuizRunning() {
+    api("/api/recite/quizzes/running")
+      .then((data) => {
+        setQuizHasRunning(Boolean(data.has_running));
+      })
+      .catch(() => {
+        setQuizHasRunning(false);
+      });
+  }
+
+  useEffect(() => {
+    loadQuizRunning();
   }, []);
 
   useEffect(() => {
@@ -2615,6 +3210,8 @@ function App() {
               reviewDates={reviewDates}
               selectedReviewDate={selectedReviewDate}
               onReviewDateChange={setSelectedReviewDate}
+              quizHasRunning={quizHasRunning}
+              onQuizStateChange={loadQuizRunning}
             />
           )}
           {mode === "todo" && <MobileTodoPanel />}
@@ -2656,7 +3253,9 @@ function App() {
                 setSelectedUnitId(unitId);
               }}
               onSelectForgotten={() => setSelectedReciteType("forgotten")}
+              onSelectQuizList={() => setSelectedReciteType("quiz_list")}
               onSelectReview={() => setSelectedReciteType("review")}
+              quizHasRunning={quizHasRunning}
               onCreateUnit={createUnit}
               onRenameUnit={renameUnit}
               onDeleteUnit={deleteUnit}
@@ -2694,7 +3293,11 @@ function App() {
           {mode === "todo" && <TodoPanel />}
 
           {mode === "recite" && selectedReciteType === "forgotten" && (
-            <ForgottenPanel notify={notify} defaultAccent={defaultAccent} />
+            <ForgottenPanel notify={notify} defaultAccent={defaultAccent} onQuizStateChange={loadQuizRunning} />
+          )}
+
+          {mode === "recite" && selectedReciteType === "quiz_list" && (
+            <QuizListPanel notify={notify} defaultAccent={defaultAccent} onQuizStateChange={loadQuizRunning} />
           )}
 
           {mode === "recite" && selectedReciteType === "review" && (
@@ -2704,6 +3307,7 @@ function App() {
               reviewDates={reviewDates}
               selectedReviewDate={selectedReviewDate}
               onReviewDateChange={setSelectedReviewDate}
+              onQuizStateChange={loadQuizRunning}
             />
           )}
 
@@ -2720,6 +3324,7 @@ function App() {
               unit={selectedUnit}
               notify={notify}
               defaultAccent={defaultAccent}
+              onQuizStateChange={loadQuizRunning}
             />
           )}
         </main>

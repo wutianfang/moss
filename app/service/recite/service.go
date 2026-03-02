@@ -2,6 +2,8 @@ package recite
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"math/rand"
 	"regexp"
 	"strings"
@@ -15,6 +17,25 @@ import (
 
 const datetimeLayout = "2006-01-02 15:04:05"
 
+const (
+	quizTypeDictation = "读写"
+	quizTypeSpelling  = "默写"
+
+	quizStatusRunning  = "进行中"
+	quizStatusFinished = "已完结"
+
+	quizWordStatusPending = "未测试"
+	quizWordStatusDone    = "已测试"
+
+	quizResultCorrect   = "正确"
+	quizResultWrong     = "错误"
+	quizResultForgotten = "忘记"
+
+	quizSourceUnit      = "unit"
+	quizSourceForgotten = "forgotten"
+	quizSourceReview    = "review"
+)
+
 var validWord = regexp.MustCompile(`^[a-z][a-z'-]*$`)
 
 type Service struct {
@@ -22,6 +43,7 @@ type Service struct {
 	unitRepo        *repository.UnitRepository
 	unitWordRepo    *repository.UnitWordRepository
 	forgottenRepo   *repository.ForgottenWordRepository
+	quizRepo        *repository.QuizRepository
 	wordFetcher     fetcher.WordFetcher
 	defaultAccent   string
 	reviewIntervals []int
@@ -32,6 +54,7 @@ func NewService(
 	unitRepo *repository.UnitRepository,
 	unitWordRepo *repository.UnitWordRepository,
 	forgottenRepo *repository.ForgottenWordRepository,
+	quizRepo *repository.QuizRepository,
 	wordFetcher fetcher.WordFetcher,
 	defaultAccent string,
 	reviewIntervals []int,
@@ -41,6 +64,7 @@ func NewService(
 		unitRepo:        unitRepo,
 		unitWordRepo:    unitWordRepo,
 		forgottenRepo:   forgottenRepo,
+		quizRepo:        quizRepo,
 		wordFetcher:     wordFetcher,
 		defaultAccent:   normalizeAccent(defaultAccent),
 		reviewIntervals: normalizeReviewIntervals(reviewIntervals),
@@ -411,6 +435,334 @@ func (s *Service) GetReviewDictationWordsByDate(ctx context.Context, rawDate str
 	return ret, nil
 }
 
+func (s *Service) StartQuiz(ctx context.Context, req StartQuizRequest) (*QuizDetail, error) {
+	if s.quizRepo == nil {
+		return nil, NewBizError(1, "测验仓储未初始化")
+	}
+	quizType, err := normalizeQuizType(req.Type)
+	if err != nil {
+		return nil, err
+	}
+	sourceKind, err := normalizeQuizSourceKind(req.SourceKind)
+	if err != nil {
+		return nil, err
+	}
+
+	words, sourceName, sourceUnitID, sourceReviewDate, err := s.listQuizSourceWords(ctx, sourceKind, req.UnitID, req.ReviewDate)
+	if err != nil {
+		return nil, err
+	}
+	if len(words) == 0 {
+		return nil, NewBizError(1002, "暂无可测试单词")
+	}
+
+	wordIDs := make([]int64, 0, len(words))
+	for _, row := range words {
+		if row.WordID <= 0 {
+			return nil, NewBizError(1, "单词ID异常")
+		}
+		wordIDs = append(wordIDs, row.WordID)
+	}
+
+	quizTitle := fmt.Sprintf("%s-%s-%s", quizType, sourceName, time.Now().Format("01/02"))
+	createdQuiz, err := s.quizRepo.Create(ctx, &entity.Quiz{
+		QuizType:         quizType,
+		Title:            quizTitle,
+		Status:           quizStatusRunning,
+		SourceKind:       sourceKind,
+		SourceUnitID:     sourceUnitID,
+		SourceReviewDate: sourceReviewDate,
+	}, wordIDs)
+	if err != nil {
+		return nil, err
+	}
+	return s.GetQuizDetail(ctx, createdQuiz.ID)
+}
+
+func (s *Service) SubmitQuizWord(
+	ctx context.Context,
+	quizID int64,
+	seq int,
+	inputAnswer string,
+	result string,
+) error {
+	if s.quizRepo == nil {
+		return NewBizError(1, "测验仓储未初始化")
+	}
+	if quizID <= 0 {
+		return NewBizError(1001, "quiz_id 非法")
+	}
+	if seq <= 0 {
+		return NewBizError(1001, "seq 非法")
+	}
+
+	quiz, err := s.quizRepo.GetByID(ctx, quizID)
+	if err != nil {
+		return err
+	}
+	if quiz == nil {
+		return NewBizError(1002, "测验不存在")
+	}
+	if quiz.Status != quizStatusRunning {
+		return NewBizError(1001, "测验已完结")
+	}
+
+	normalizedResult, err := normalizeQuizResult(result)
+	if err != nil {
+		return err
+	}
+	if err := s.quizRepo.UpdateWordResult(ctx, quizID, seq, strings.TrimSpace(inputAnswer), normalizedResult); err != nil {
+		if err == sql.ErrNoRows {
+			return NewBizError(1002, "测验单词不存在")
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Service) FinishQuiz(ctx context.Context, quizID int64) (*QuizDetail, error) {
+	if s.quizRepo == nil {
+		return nil, NewBizError(1, "测验仓储未初始化")
+	}
+	if quizID <= 0 {
+		return nil, NewBizError(1001, "quiz_id 非法")
+	}
+	quiz, err := s.quizRepo.GetByID(ctx, quizID)
+	if err != nil {
+		return nil, err
+	}
+	if quiz == nil {
+		return nil, NewBizError(1002, "测验不存在")
+	}
+	if err := s.quizRepo.Finish(ctx, quizID); err != nil {
+		return nil, err
+	}
+	return s.GetQuizDetail(ctx, quizID)
+}
+
+func (s *Service) GetQuizDetail(ctx context.Context, quizID int64) (*QuizDetail, error) {
+	if s.quizRepo == nil {
+		return nil, NewBizError(1, "测验仓储未初始化")
+	}
+	if quizID <= 0 {
+		return nil, NewBizError(1001, "quiz_id 非法")
+	}
+	quiz, err := s.quizRepo.GetByID(ctx, quizID)
+	if err != nil {
+		return nil, err
+	}
+	if quiz == nil {
+		return nil, NewBizError(1002, "测验不存在")
+	}
+
+	quizWords, err := s.quizRepo.ListWords(ctx, quizID)
+	if err != nil {
+		return nil, err
+	}
+	wordIDs := make([]int64, 0, len(quizWords))
+	for _, row := range quizWords {
+		wordIDs = append(wordIDs, row.WordID)
+	}
+	wordMap, err := s.wordRepo.GetByIDs(ctx, wordIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	words := make([]QuizWordItem, 0, len(quizWords))
+	stats := QuizStats{Total: len(quizWords)}
+	nextSeq := 0
+	for _, row := range quizWords {
+		detail := UnitWordItem{
+			Seq:    row.OrderNo,
+			WordID: row.WordID,
+		}
+		if word := wordMap[row.WordID]; word != nil {
+			detail = buildUnitWordItem(word, row.OrderNo)
+		}
+
+		if row.Status == quizWordStatusDone {
+			stats.Tested++
+		}
+		switch row.Result {
+		case quizResultCorrect:
+			stats.Correct++
+		case quizResultForgotten:
+			stats.Forgotten++
+		case quizResultWrong:
+			stats.Wrong++
+		}
+		if nextSeq == 0 && row.Status == quizWordStatusPending {
+			nextSeq = row.OrderNo
+		}
+		words = append(words, QuizWordItem{
+			Seq:         row.OrderNo,
+			WordStatus:  row.Status,
+			InputAnswer: row.InputAnswer,
+			Result:      row.Result,
+			WordDetail:  detail,
+		})
+	}
+	reviewDate := ""
+	if quiz.SourceReviewDate != nil {
+		reviewDate = quiz.SourceReviewDate.Format("2006-01-02")
+	}
+
+	return &QuizDetail{
+		Quiz: QuizInfo{
+			ID:         quiz.ID,
+			Type:       quiz.QuizType,
+			Title:      quiz.Title,
+			Status:     quiz.Status,
+			CreatedAt:  quiz.CreatedAt.Format(datetimeLayout),
+			Source:     quiz.SourceKind,
+			ReviewDate: reviewDate,
+			Stats:      stats,
+			NextSeq:    nextSeq,
+		},
+		Words: words,
+	}, nil
+}
+
+func (s *Service) ListQuizzes(
+	ctx context.Context,
+	page int,
+	pageSize int,
+) ([]QuizListItem, int64, bool, error) {
+	if s.quizRepo == nil {
+		return nil, 0, false, NewBizError(1, "测验仓储未初始化")
+	}
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+	offset := (page - 1) * pageSize
+	rows, total, err := s.quizRepo.List(ctx, pageSize, offset)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	hasRunning, err := s.quizRepo.HasRunning(ctx)
+	if err != nil {
+		return nil, 0, false, err
+	}
+
+	ret := make([]QuizListItem, 0, len(rows))
+	for _, row := range rows {
+		nextSeq := 0
+		if row.Quiz.Status == quizStatusRunning && row.TotalWords > row.TestedWords {
+			nextSeq = row.TestedWords + 1
+		}
+		ret = append(ret, QuizListItem{
+			ID:        row.Quiz.ID,
+			Type:      row.Quiz.QuizType,
+			Title:     row.Quiz.Title,
+			Status:    row.Quiz.Status,
+			Source:    row.Quiz.SourceKind,
+			CreatedAt: row.Quiz.CreatedAt.Format(datetimeLayout),
+			Stats: QuizStats{
+				Total:     row.TotalWords,
+				Tested:    row.TestedWords,
+				Correct:   row.CorrectCount,
+				Wrong:     row.WrongCount,
+				Forgotten: row.ForgottenCount,
+			},
+			NextSeq: nextSeq,
+		})
+	}
+	return ret, total, hasRunning, nil
+}
+
+func (s *Service) HasRunningQuiz(ctx context.Context) (bool, error) {
+	if s.quizRepo == nil {
+		return false, NewBizError(1, "测验仓储未初始化")
+	}
+	return s.quizRepo.HasRunning(ctx)
+}
+
+func (s *Service) listQuizSourceWords(
+	ctx context.Context,
+	sourceKind string,
+	unitID int64,
+	reviewDate string,
+) ([]UnitWordItem, string, int64, *time.Time, error) {
+	switch sourceKind {
+	case quizSourceForgotten:
+		words, err := s.GetForgottenDictationWords(ctx)
+		return words, "遗忘单词", 0, nil, err
+	case quizSourceReview:
+		targetDate, err := parseReviewDate(reviewDate)
+		if err != nil {
+			return nil, "", 0, nil, err
+		}
+		words, err := s.GetReviewDictationWordsByDate(ctx, targetDate.Format("2006-01-02"))
+		if err != nil {
+			return nil, "", 0, nil, err
+		}
+		reviewDateValue := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, targetDate.Location())
+		return words, "今日复习", 0, &reviewDateValue, nil
+	default:
+		if unitID <= 0 {
+			return nil, "", 0, nil, NewBizError(1001, "unit_id 非法")
+		}
+		unit, err := s.unitRepo.GetByID(ctx, unitID)
+		if err != nil {
+			return nil, "", 0, nil, err
+		}
+		if unit == nil {
+			return nil, "", 0, nil, NewBizError(1002, "单元不存在")
+		}
+		words, err := s.GetDictationWords(ctx, unitID)
+		if err != nil {
+			return nil, "", 0, nil, err
+		}
+		return words, unit.Name, unit.ID, nil, nil
+	}
+}
+
+func normalizeQuizType(raw string) (string, error) {
+	text := strings.TrimSpace(raw)
+	switch text {
+	case quizTypeDictation, "听写", "dictation":
+		return quizTypeDictation, nil
+	case quizTypeSpelling, "spelling":
+		return quizTypeSpelling, nil
+	default:
+		return "", NewBizError(1001, "测验类型非法")
+	}
+}
+
+func normalizeQuizSourceKind(raw string) (string, error) {
+	text := strings.TrimSpace(raw)
+	switch text {
+	case quizSourceUnit:
+		return quizSourceUnit, nil
+	case quizSourceForgotten:
+		return quizSourceForgotten, nil
+	case quizSourceReview:
+		return quizSourceReview, nil
+	default:
+		return "", NewBizError(1001, "测验来源非法")
+	}
+}
+
+func normalizeQuizResult(raw string) (string, error) {
+	text := strings.TrimSpace(raw)
+	switch text {
+	case quizResultCorrect:
+		return quizResultCorrect, nil
+	case quizResultWrong:
+		return quizResultWrong, nil
+	case quizResultForgotten, "记住", "operated":
+		return quizResultForgotten, nil
+	default:
+		return "", NewBizError(1001, "测验结果非法")
+	}
+}
+
 func normalizeWord(rawWord string) (string, error) {
 	word := strings.ToLower(strings.TrimSpace(rawWord))
 	if word == "" {
@@ -599,6 +951,7 @@ func buildUnitWordItem(row *entity.Word, seq int) UnitWordItem {
 	wordInfo := buildWordInfo(row)
 	return UnitWordItem{
 		Seq:            seq,
+		WordID:         row.ID,
 		Word:           wordInfo.Word,
 		PhEn:           wordInfo.PhEn,
 		PhAm:           wordInfo.PhAm,

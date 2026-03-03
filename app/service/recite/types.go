@@ -43,8 +43,9 @@ type UnitInfo struct {
 }
 
 type ClientConfig struct {
-	DefaultAccent       string `json:"default_accent"`
-	ReviewIntervalsDays []int  `json:"review_intervals_days"`
+	DefaultAccent       string   `json:"default_accent"`
+	ReviewIntervalsDays []int    `json:"review_intervals_days"`
+	NoteTypes           []string `json:"note_types"`
 }
 
 type UnitWordItem struct {
@@ -117,4 +118,26 @@ type StartQuizRequest struct {
 	SourceKind string `json:"source_kind"`
 	UnitID     int64  `json:"unit_id"`
 	ReviewDate string `json:"review_date"`
+}
+
+type NoteTag struct {
+	ID   int64  `json:"id"`
+	Type string `json:"type"`
+}
+
+type NoteDetail struct {
+	ID        int64          `json:"id"`
+	Type      string         `json:"type"`
+	Content   string         `json:"content"`
+	CreatedAt string         `json:"created_at"`
+	UpdatedAt string         `json:"updated_at"`
+	Words     []UnitWordItem `json:"words"`
+}
+
+type NoteListItem struct {
+	ID        int64    `json:"id"`
+	Type      string   `json:"type"`
+	Content   string   `json:"content"`
+	Words     []string `json:"words"`
+	CreatedAt string   `json:"created_at"`
 }

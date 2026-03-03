@@ -74,6 +74,26 @@ var ddlList = []string{
 		CONSTRAINT fk_quiz_words_quiz FOREIGN KEY (quiz_id) REFERENCES quizzes(id) ON DELETE CASCADE,
 		CONSTRAINT fk_quiz_words_word FOREIGN KEY (word_id) REFERENCES words(id)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`,
+	`CREATE TABLE IF NOT EXISTS notes (
+		id BIGINT PRIMARY KEY AUTO_INCREMENT,
+		note_type VARCHAR(32) NOT NULL,
+		content LONGTEXT NOT NULL,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		KEY idx_note_created(created_at, id),
+		KEY idx_note_type_created(note_type, created_at, id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`,
+	`CREATE TABLE IF NOT EXISTS note_words (
+		id BIGINT PRIMARY KEY AUTO_INCREMENT,
+		note_id BIGINT NOT NULL,
+		word_id BIGINT NOT NULL,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE KEY uq_note_word(note_id, word_id),
+		KEY idx_note_words_word(word_id, note_id),
+		KEY idx_note_words_note(note_id, word_id),
+		CONSTRAINT fk_note_words_note FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE,
+		CONSTRAINT fk_note_words_word FOREIGN KEY (word_id) REFERENCES words(id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`,
 }
 
 func AutoMigrate(db *sql.DB) error {

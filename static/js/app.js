@@ -124,6 +124,7 @@ function PartAndSentence({
   forceAllSentences = false,
   largeTabs = false,
   looseSentence = false,
+  afterMeaning = null,
 }) {
   const [expanded, setExpanded] = useState(false);
   const [groupIndex, setGroupIndex] = useState(0);
@@ -150,6 +151,12 @@ function PartAndSentence({
           {(row.parts || []).length === 0 && <li>-</li>}
         </ul>
       </div>
+      {afterMeaning && (
+        <>
+          <div className="section-divider" />
+          {afterMeaning}
+        </>
+      )}
 
       <div className="section-divider" />
 
@@ -207,7 +214,16 @@ function PartAndSentence({
   );
 }
 
-function WordTable({ rows, playAudio, operationLabel, onOperation, resultResolver }) {
+function WordTable({
+  rows,
+  playAudio,
+  operationLabel,
+  onOperation,
+  resultResolver,
+  noteMap,
+  onCreateNote,
+  onOpenNote,
+}) {
   const showOperation = Boolean(operationLabel && onOperation);
   return (
     <table className="word-table">
@@ -222,6 +238,7 @@ function WordTable({ rows, playAudio, operationLabel, onOperation, resultResolve
       <tbody>
         {rows.map((row, idx) => {
           const result = resultResolver ? resultResolver(row, idx) : null;
+          const rowNotes = (noteMap && row && row.word_id) ? (noteMap[row.word_id] || []) : [];
           return (
             <tr key={`${row.word}-${idx}`}>
               <td>{idx + 1}</td>
@@ -281,6 +298,37 @@ function WordTable({ rows, playAudio, operationLabel, onOperation, resultResolve
                     >
                       {"\u25B6"}
                     </a>
+                    {(rowNotes.length > 0 || onCreateNote) && (
+                      <div className="desc-note-inline-tools">
+                        {rowNotes.map((note) => (
+                          <a
+                            key={`${row.word_id}-${note.id}`}
+                            className="desc-op-link"
+                            href="#"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              if (onOpenNote) {
+                                onOpenNote(note.id, row);
+                              }
+                            }}
+                          >
+                            {note.type}
+                          </a>
+                        ))}
+                        {onCreateNote && (
+                          <a
+                            className="desc-op-link"
+                            href="#"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              onCreateNote(row);
+                            }}
+                          >
+                            创建笔记
+                          </a>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="section-divider" />
                   <PartAndSentence row={row} playAudio={playAudio} />
@@ -307,6 +355,288 @@ function MeaningCell({ parts }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+function collectWordIDs(rows) {
+  const seen = new Set();
+  const ret = [];
+  (rows || []).forEach((row) => {
+    const id = Number(row && row.word_id);
+    if (id > 0 && !seen.has(id)) {
+      seen.add(id);
+      ret.push(id);
+    }
+  });
+  return ret;
+}
+
+function NoteViewerModal({ visible, note, loading, onClose }) {
+  if (!visible) {
+    return null;
+  }
+  return (
+    <div className="note-modal-mask" onClick={onClose}>
+      <div className="note-modal-card view" onClick={(e) => e.stopPropagation()}>
+        <div className="note-modal-header">
+          <h3>笔记</h3>
+          <button className="btn secondary" onClick={onClose}>关闭</button>
+        </div>
+        {loading && <div className="helper-tip">加载中...</div>}
+        {!loading && note && (
+          <div className="note-view-body">
+            <div className="note-view-line"><strong>标签：</strong>{note.type || "-"}</div>
+            <div className="note-view-line"><strong>关联单词：</strong>{(note.words || []).map((w) => w.word).join(" / ") || "-"}</div>
+            <pre className="note-content-pre">{note.content || "-"}</pre>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function NoteEditorModal({
+  visible,
+  noteId,
+  defaultWord,
+  noteTypes,
+  onClose,
+  onSaved,
+}) {
+  const playAudio = useAudioPlayer();
+  const [searchInput, setSearchInput] = useState("");
+  const [searchResult, setSearchResult] = useState(null);
+  const [words, setWords] = useState([]);
+  const [noteType, setNoteType] = useState("");
+  const [content, setContent] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+    const options = (noteTypes && noteTypes.length > 0) ? noteTypes : ["近义词", "反义词", "关联词跟"];
+    setSearchInput("");
+    setSearchResult(null);
+    setError("");
+    setSaving(false);
+    if (noteId) {
+      setLoading(true);
+      api(`/api/recite/notes/${noteId}`)
+        .then((data) => {
+          const note = data.note || {};
+          setNoteType(note.type || options[0]);
+          setContent(note.content || "");
+          setWords(note.words || []);
+        })
+        .catch((err) => setError(err.message))
+        .finally(() => setLoading(false));
+      return;
+    }
+    setLoading(false);
+    setNoteType(options[0] || "");
+    setContent("");
+    if (defaultWord && defaultWord.word_id) {
+      setWords([defaultWord]);
+    } else {
+      setWords([]);
+    }
+  }, [visible, noteId, defaultWord && defaultWord.word_id, noteTypes && noteTypes.join(",")]);
+
+  function addRelatedWord(row) {
+    if (!row || !row.id) {
+      return;
+    }
+    const item = {
+      word_id: row.id,
+      word: row.word,
+      ph_en: row.ph_en,
+      ph_am: row.ph_am,
+      en_audio: row.en_audio_url,
+      am_audio: row.am_audio_url,
+      parts: row.parts || [],
+      sentence_groups: row.sentence_groups || [],
+    };
+    setWords((prev) => {
+      if (prev.some((it) => Number(it.word_id) === Number(item.word_id))) {
+        return prev;
+      }
+      return [...prev, item];
+    });
+  }
+
+  function removeRelatedWord(wordID) {
+    setWords((prev) => prev.filter((item) => Number(item.word_id) !== Number(wordID)));
+  }
+
+  function searchWord() {
+    const word = (searchInput || "").trim();
+    if (!word) {
+      setError("请输入单词");
+      return;
+    }
+    setError("");
+    api("/api/recite/words/query", { method: "POST", body: { word } })
+      .then((data) => setSearchResult(data.word || null))
+      .catch((err) => setError(err.message));
+  }
+
+  function submit() {
+    if (saving) {
+      return;
+    }
+    if (!noteType) {
+      setError("请选择类型");
+      return;
+    }
+    if (words.length === 0) {
+      setError("请至少关联一个单词");
+      return;
+    }
+    if ((content || "").trim() === "") {
+      setError("笔记内容不能为空");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    const body = {
+      note_type: noteType,
+      content,
+      word_ids: words.map((item) => Number(item.word_id)).filter((id) => id > 0),
+    };
+    const req = noteId
+      ? api(`/api/recite/notes/${noteId}`, { method: "PUT", body })
+      : api("/api/recite/notes", { method: "POST", body });
+    req
+      .then((data) => {
+        if (onSaved) {
+          onSaved(data.note || null);
+        }
+        onClose();
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setSaving(false));
+  }
+
+  if (!visible) {
+    return null;
+  }
+
+  const typeOptions = (noteTypes && noteTypes.length > 0) ? noteTypes : ["近义词", "反义词", "关联词跟"];
+  return (
+    <div className="note-modal-mask" onClick={onClose}>
+      <div className="note-modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="note-modal-header">
+          <h3>{noteId ? "更新笔记" : "创建笔记"}</h3>
+          <button className="btn secondary" onClick={onClose}>关闭</button>
+        </div>
+        {loading && <div className="helper-tip">加载中...</div>}
+        {!loading && (
+          <div className="note-form">
+            <div className="note-form-block">
+              <div className="note-form-label">搜索单词</div>
+              <div className="note-search-row">
+                <input
+                  className="input"
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  placeholder="输入单词"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      searchWord();
+                    }
+                  }}
+                />
+                <button className="btn secondary" onClick={searchWord}>搜索</button>
+                {searchResult && <button className="btn" onClick={() => addRelatedWord(searchResult)}>关联单词</button>}
+              </div>
+              {searchResult && (
+                <div className="note-search-result">
+                  <div className="desc-header">
+                    <div className="small-title">发音</div>
+                  </div>
+                  <div className="yinbiao-inline">
+                    <span>英音：[{searchResult.ph_en || "-"}]</span>
+                    <a
+                      className="play-icon-link"
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        playAudio(searchResult.en_audio_url);
+                      }}
+                    >
+                      {"\u25B6"}
+                    </a>
+                    <span className="yinbiao-gap">美音：[{searchResult.ph_am || "-"}]</span>
+                    <a
+                      className="play-icon-link"
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        playAudio(searchResult.am_audio_url || searchResult.en_audio_url);
+                      }}
+                    >
+                      {"\u25B6"}
+                    </a>
+                  </div>
+                  <MeaningCell parts={searchResult.parts || []} />
+                </div>
+              )}
+            </div>
+
+            <div className="note-form-block">
+              <div className="note-form-label">关联单词</div>
+              <div className="note-related-list">
+                {words.length === 0 && <span className="helper-tip">暂无关联单词</span>}
+                {words.map((item) => (
+                  <div className="note-related-item" key={`note-word-${item.word_id}`}>
+                    <label className="note-related-check">
+                      <input type="checkbox" checked readOnly />
+                      <span>{item.word}</span>
+                    </label>
+                    <button className="note-remove-btn" onClick={() => removeRelatedWord(item.word_id)}>x</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="note-form-block">
+              <div className="note-form-label">类型</div>
+              <div className="note-type-list">
+                {typeOptions.map((item) => (
+                  <label className="note-type-item" key={`note-type-${item}`}>
+                    <input
+                      type="radio"
+                      name="note_type"
+                      checked={noteType === item}
+                      onChange={() => setNoteType(item)}
+                    />
+                    <span>{item}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="note-form-block">
+              <div className="note-form-label">笔记内容</div>
+              <textarea
+                className="input note-textarea"
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                placeholder="请输入笔记内容"
+              />
+            </div>
+
+            {error && <div className="error">{error}</div>}
+            <div className="note-submit-row">
+              <button className="btn brand" disabled={saving} onClick={submit}>{noteId ? "更新" : "创建"}</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -770,6 +1100,23 @@ function DictationPanel({
     }
     return formatMeaningLines(current.parts);
   }, [current && current.word, current && current.parts]);
+  const displayRows = useMemo(() => {
+    if (!readOnly) {
+      return words;
+    }
+    const withIdx = words.map((row, idx) => ({ row, idx }));
+    withIdx.sort((a, b) => {
+      const statusA = resultMap[wordKey(a.row)] || "";
+      const statusB = resultMap[wordKey(b.row)] || "";
+      const rankA = statusA === "correct" ? 1 : 0;
+      const rankB = statusB === "correct" ? 1 : 0;
+      if (rankA !== rankB) {
+        return rankA - rankB;
+      }
+      return a.idx - b.idx;
+    });
+    return withIdx.map((item) => item.row);
+  }, [readOnly, words, resultMap]);
 
   if (loading) {
     return (
@@ -835,7 +1182,7 @@ function DictationPanel({
             测验结果：共{quizType}单词 {stats.total} 个，正确 {stats.correct} 个，错误 {stats.wrong} 个，忘记 {stats.forgotten} 个
           </div>
           <WordTable
-            rows={words}
+            rows={displayRows}
             playAudio={playAudio}
             operationLabel={operationLabel}
             onOperation={handleOperation}
@@ -855,19 +1202,38 @@ function SpellingPanel(props) {
   return <DictationPanel {...props} quizType="默写" />;
 }
 
-function ReciteUnitPanel({ unit, notify, defaultAccent, onQuizStateChange }) {
+function ReciteUnitPanel({ unit, notify, defaultAccent, onQuizStateChange, noteTypes }) {
   const playAudio = useAudioPlayer();
   const [view, setView] = useState("detail");
   const [wordInput, setWordInput] = useState("");
   const [queryWord, setQueryWord] = useState(null);
   const [wordRows, setWordRows] = useState([]);
+  const [noteMap, setNoteMap] = useState({});
+  const [noteEditorVisible, setNoteEditorVisible] = useState(false);
+  const [editingNoteID, setEditingNoteID] = useState(0);
+  const [editingNoteWord, setEditingNoteWord] = useState(null);
   const [loadingWords, setLoadingWords] = useState(true);
   const [error, setError] = useState("");
+
+  function loadWordNotes(rows) {
+    const ids = collectWordIDs(rows);
+    if (ids.length === 0) {
+      setNoteMap({});
+      return Promise.resolve();
+    }
+    return api(`/api/recite/notes/by-words?word_ids=${ids.join(",")}`)
+      .then((data) => setNoteMap(data.word_notes || {}))
+      .catch(() => setNoteMap({}));
+  }
 
   function loadWords() {
     setLoadingWords(true);
     return api(`/api/recite/units/${unit.id}/words`)
-      .then((data) => setWordRows(data.words || []))
+      .then((data) => {
+        const rows = data.words || [];
+        setWordRows(rows);
+        return loadWordNotes(rows);
+      })
       .finally(() => setLoadingWords(false));
   }
 
@@ -1047,23 +1413,66 @@ function ReciteUnitPanel({ unit, notify, defaultAccent, onQuizStateChange }) {
         <WordTable
           rows={wordRows}
           playAudio={playAudio}
+          noteMap={noteMap}
+          onCreateNote={(row) => {
+            setEditingNoteID(0);
+            setEditingNoteWord(row);
+            setNoteEditorVisible(true);
+          }}
+          onOpenNote={(noteID, row) => {
+            setEditingNoteID(noteID);
+            setEditingNoteWord(row || null);
+            setNoteEditorVisible(true);
+          }}
           operationLabel="忘记"
           onOperation={(word) => forgetWord(word).catch((err) => setError(err.message))}
         />
       </section>
+      <NoteEditorModal
+        visible={noteEditorVisible}
+        noteId={editingNoteID}
+        defaultWord={editingNoteWord}
+        noteTypes={noteTypes}
+        onClose={() => {
+          setNoteEditorVisible(false);
+          setEditingNoteID(0);
+        }}
+        onSaved={() => {
+          loadWordNotes(wordRows);
+        }}
+      />
     </div>
   );
 }
 
-function ForgottenPanel({ notify, defaultAccent, onQuizStateChange }) {
+function ForgottenPanel({ notify, defaultAccent, onQuizStateChange, noteTypes }) {
   const playAudio = useAudioPlayer();
   const [view, setView] = useState("detail");
   const [wordRows, setWordRows] = useState([]);
+  const [noteMap, setNoteMap] = useState({});
+  const [noteEditorVisible, setNoteEditorVisible] = useState(false);
+  const [editingNoteID, setEditingNoteID] = useState(0);
+  const [editingNoteWord, setEditingNoteWord] = useState(null);
   const [error, setError] = useState("");
+
+  function loadWordNotes(rows) {
+    const ids = collectWordIDs(rows);
+    if (ids.length === 0) {
+      setNoteMap({});
+      return Promise.resolve();
+    }
+    return api(`/api/recite/notes/by-words?word_ids=${ids.join(",")}`)
+      .then((data) => setNoteMap(data.word_notes || {}))
+      .catch(() => setNoteMap({}));
+  }
 
   function loadWords() {
     return api("/api/recite/forgotten/words")
-      .then((data) => setWordRows(data.words || []));
+      .then((data) => {
+        const rows = data.words || [];
+        setWordRows(rows);
+        return loadWordNotes(rows);
+      });
   }
 
   useEffect(() => {
@@ -1149,10 +1558,34 @@ function ForgottenPanel({ notify, defaultAccent, onQuizStateChange }) {
         <WordTable
           rows={wordRows}
           playAudio={playAudio}
+          noteMap={noteMap}
+          onCreateNote={(row) => {
+            setEditingNoteID(0);
+            setEditingNoteWord(row);
+            setNoteEditorVisible(true);
+          }}
+          onOpenNote={(noteID, row) => {
+            setEditingNoteID(noteID);
+            setEditingNoteWord(row || null);
+            setNoteEditorVisible(true);
+          }}
           operationLabel="记住"
           onOperation={(word) => rememberWord(word).catch((err) => setError(err.message))}
         />
       )}
+      <NoteEditorModal
+        visible={noteEditorVisible}
+        noteId={editingNoteID}
+        defaultWord={editingNoteWord}
+        noteTypes={noteTypes}
+        onClose={() => {
+          setNoteEditorVisible(false);
+          setEditingNoteID(0);
+        }}
+        onSaved={() => {
+          loadWordNotes(wordRows);
+        }}
+      />
     </div>
   );
 }
@@ -1164,22 +1597,40 @@ function ReviewPanel({
   selectedReviewDate,
   onReviewDateChange,
   onQuizStateChange,
+  noteTypes,
 }) {
   const playAudio = useAudioPlayer();
   const [view, setView] = useState("detail");
   const [wordRows, setWordRows] = useState([]);
+  const [noteMap, setNoteMap] = useState({});
+  const [noteEditorVisible, setNoteEditorVisible] = useState(false);
+  const [editingNoteID, setEditingNoteID] = useState(0);
+  const [editingNoteWord, setEditingNoteWord] = useState(null);
   const [reviewUnits, setReviewUnits] = useState([]);
   const [loadingWords, setLoadingWords] = useState(true);
   const [error, setError] = useState("");
   const query = buildReviewQuery(selectedReviewDate);
+
+  function loadWordNotes(rows) {
+    const ids = collectWordIDs(rows);
+    if (ids.length === 0) {
+      setNoteMap({});
+      return Promise.resolve();
+    }
+    return api(`/api/recite/notes/by-words?word_ids=${ids.join(",")}`)
+      .then((data) => setNoteMap(data.word_notes || {}))
+      .catch(() => setNoteMap({}));
+  }
 
   function loadWords() {
     setLoadingWords(true);
     setError("");
     return api(`/api/recite/review/words${query}`)
       .then((data) => {
-        setWordRows(data.words || []);
+        const rows = data.words || [];
+        setWordRows(rows);
         setReviewUnits(data.units || []);
+        return loadWordNotes(rows);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoadingWords(false));
@@ -1279,10 +1730,34 @@ function ReviewPanel({
         <WordTable
           rows={wordRows}
           playAudio={playAudio}
+          noteMap={noteMap}
+          onCreateNote={(row) => {
+            setEditingNoteID(0);
+            setEditingNoteWord(row);
+            setNoteEditorVisible(true);
+          }}
+          onOpenNote={(noteID, row) => {
+            setEditingNoteID(noteID);
+            setEditingNoteWord(row || null);
+            setNoteEditorVisible(true);
+          }}
           operationLabel="忘记"
           onOperation={(word) => forgetWord(word).catch((err) => setError(err.message))}
         />
       )}
+      <NoteEditorModal
+        visible={noteEditorVisible}
+        noteId={editingNoteID}
+        defaultWord={editingNoteWord}
+        noteTypes={noteTypes}
+        onClose={() => {
+          setNoteEditorVisible(false);
+          setEditingNoteID(0);
+        }}
+        onSaved={() => {
+          loadWordNotes(wordRows);
+        }}
+      />
     </div>
   );
 }
@@ -1369,10 +1844,10 @@ function QuizListPanel({ notify, defaultAccent, onQuizStateChange }) {
   const totalPages = Math.max(Math.ceil(total / 20), 1);
   return (
     <div className="right-panel-inner">
-      <h2>测试列表</h2>
+      <h2>测验列表</h2>
       {error && <div className="error">{error}</div>}
       {loading && <p className="helper-tip">加载中...</p>}
-      {!loading && rows.length === 0 && <p className="helper-tip">暂无测试记录。</p>}
+      {!loading && rows.length === 0 && <p className="helper-tip">暂无测验记录。</p>}
       {!loading && rows.length > 0 && (
         <table className="word-table">
           <thead>
@@ -1381,7 +1856,6 @@ function QuizListPanel({ notify, defaultAccent, onQuizStateChange }) {
               <th>标题</th>
               <th style={{ width: "110px" }}>状态</th>
               <th style={{ width: "200px" }}>统计</th>
-              <th style={{ width: "180px" }}>创建时间</th>
               <th style={{ width: "100px" }}>操作</th>
             </tr>
           </thead>
@@ -1394,7 +1868,6 @@ function QuizListPanel({ notify, defaultAccent, onQuizStateChange }) {
                 <td>
                   共{item.stats.total}，已测{item.stats.tested}，正确{item.stats.correct}，错误{item.stats.wrong}，忘记{item.stats.forgotten}
                 </td>
-                <td>{item.created_at}</td>
                 <td>
                   <button
                     className="btn secondary"
@@ -1422,10 +1895,101 @@ function QuizListPanel({ notify, defaultAccent, onQuizStateChange }) {
   );
 }
 
-function MobileWordDetailBody({ row, playAudio }) {
+function NoteListPanel() {
+  const [rows, setRows] = useState([]);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [viewerVisible, setViewerVisible] = useState(false);
+  const [viewerLoading, setViewerLoading] = useState(false);
+  const [viewerNote, setViewerNote] = useState(null);
+
+  function loadList(nextPage = 1) {
+    setLoading(true);
+    setError("");
+    return api(`/api/recite/notes?page=${Math.max(nextPage, 1)}&page_size=20`)
+      .then((data) => {
+        setRows(data.items || []);
+        setTotal(Number(data.total) || 0);
+        setPage(Math.max(Number(data.page) || nextPage, 1));
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    loadList(1);
+  }, []);
+
+  function openViewer(noteID) {
+    setViewerVisible(true);
+    setViewerLoading(true);
+    setViewerNote(null);
+    api(`/api/recite/notes/${noteID}`)
+      .then((data) => setViewerNote(data.note || null))
+      .catch((err) => setError(err.message))
+      .finally(() => setViewerLoading(false));
+  }
+
+  const totalPages = Math.max(Math.ceil(total / 20), 1);
+  return (
+    <div className="right-panel-inner">
+      <h2>笔记列表</h2>
+      {error && <div className="error">{error}</div>}
+      {loading && <p className="helper-tip">加载中...</p>}
+      {!loading && rows.length === 0 && <p className="helper-tip">暂无笔记。</p>}
+      {!loading && rows.length > 0 && (
+        <table className="word-table">
+          <thead>
+            <tr>
+              <th style={{ width: "56px" }}>序号</th>
+              <th>标题</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((item, idx) => {
+              const wordsText = (item.words || []).join(" / ");
+              const fullTitle = `${item.type} — ${wordsText || "-"}`;
+              return (
+                <tr key={item.id}>
+                  <td>{(page - 1) * 20 + idx + 1}</td>
+                  <td>
+                    <button
+                      className="note-title-inline-btn"
+                      onClick={() => openViewer(item.id)}
+                    >
+                      {fullTitle}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+      {!loading && totalPages > 1 && (
+        <div className="dictation-actions">
+          <button className="btn secondary" disabled={page <= 1} onClick={() => loadList(page - 1)}>上一页</button>
+          <div>{page}/{totalPages}</div>
+          <button className="btn secondary" disabled={page >= totalPages} onClick={() => loadList(page + 1)}>下一页</button>
+        </div>
+      )}
+      <NoteViewerModal
+        visible={viewerVisible}
+        note={viewerNote}
+        loading={viewerLoading}
+        onClose={() => setViewerVisible(false)}
+      />
+    </div>
+  );
+}
+
+function MobileWordDetailBody({ row, playAudio, noteTags, onOpenNote }) {
   if (!row) {
     return null;
   }
+  const notes = noteTags || [];
   return (
     <div className="mobile-word-detail-body">
       <div className="mobile-word-audio-row">
@@ -1460,6 +2024,26 @@ function MobileWordDetailBody({ row, playAudio }) {
         forceAllSentences
         largeTabs
         looseSentence
+        afterMeaning={notes.length > 0 ? (
+          <div className="mobile-note-section">
+            <div className="mobile-note-title">笔记</div>
+            <div className="mobile-note-list">
+              {notes.map((note) => (
+                <button
+                  key={`mobile-detail-note-${note.id}`}
+                  className="mobile-note-link"
+                  onClick={() => {
+                    if (onOpenNote) {
+                      onOpenNote(note.id);
+                    }
+                  }}
+                >
+                  {note.type}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
       />
     </div>
   );
@@ -1822,15 +2406,19 @@ function MobileQuizPanel({
 
   if (finished || !current) {
     const finishedTitleClass = `mobile-quiz-finished mobile-quiz-finished-dictation ${incorrectRows.length > 0 ? "with-list" : ""}`.trim();
+    const finishedQuizTitle = (quiz && quiz.status === "进行中")
+      ? title
+      : (title || "").replace(/（进行中）$/, "");
     return (
       <div className="mobile-page-card">
         <div className="mobile-topbar">
           <button className="mobile-back-btn" onClick={onBack}>{"< 退出"}</button>
-          <h2 className="mobile-page-title">{title}</h2>
+          <h2 className="mobile-page-title">测验结果</h2>
           <div />
         </div>
         <>
           <div className={finishedTitleClass}>本轮已完成，总分 {scoreValue} 分</div>
+          <div className="mobile-quiz-finished-summary-line">{finishedQuizTitle}</div>
           <div className="mobile-quiz-finished-summary-line">单词共：{stats.total} 个</div>
           <div className="mobile-quiz-finished-summary-line">正确：{stats.correct} 个</div>
           <div className="mobile-quiz-finished-summary-line">错误：{stats.wrong} 个</div>
@@ -1991,13 +2579,21 @@ function MobileReciteRoot({
     reviewDate: selectedReviewDate || "",
   });
   const [words, setWords] = useState([]);
+  const [wordNoteMap, setWordNoteMap] = useState({});
   const [reviewUnits, setReviewUnits] = useState([]);
   const [selectedWord, setSelectedWord] = useState(null);
   const [quizRows, setQuizRows] = useState([]);
   const [quizPage, setQuizPage] = useState(1);
   const [quizTotal, setQuizTotal] = useState(0);
   const [quizListLoading, setQuizListLoading] = useState(false);
+  const [noteRows, setNoteRows] = useState([]);
+  const [notePage, setNotePage] = useState(1);
+  const [noteTotal, setNoteTotal] = useState(0);
+  const [noteListLoading, setNoteListLoading] = useState(false);
   const [activeQuizItem, setActiveQuizItem] = useState(null);
+  const [noteViewerVisible, setNoteViewerVisible] = useState(false);
+  const [noteViewerLoading, setNoteViewerLoading] = useState(false);
+  const [noteViewerItem, setNoteViewerItem] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [unitMetaExpanded, setUnitMetaExpanded] = useState(false);
@@ -2009,6 +2605,17 @@ function MobileReciteRoot({
   const viewRef = useRef("home");
   const contextKeyRef = useRef("unit:0");
   const loadedContextKeyRef = useRef("");
+
+  function loadWordNotes(rows) {
+    const ids = collectWordIDs(rows);
+    if (ids.length === 0) {
+      setWordNoteMap({});
+      return Promise.resolve();
+    }
+    return api(`/api/recite/notes/by-words?word_ids=${ids.join(",")}`)
+      .then((data) => setWordNoteMap(data.word_notes || {}))
+      .catch(() => setWordNoteMap({}));
+  }
 
   function buildContextKey(nextContext) {
     const safeContext = nextContext || { kind: "unit", unitId: 0 };
@@ -2235,12 +2842,16 @@ function MobileReciteRoot({
     setError("");
     return api(path)
       .then((data) => {
-        setWords(data.words || []);
+        const rows = data.words || [];
+        setWords(rows);
         if (kind === "review") {
           setReviewUnits(data.units || []);
         } else {
           setReviewUnits([]);
         }
+        return loadWordNotes(rows);
+      })
+      .then(() => {
         loadedContextKeyRef.current = buildContextKey({ kind, unitId, reviewDate: options.reviewDate || "" });
       })
       .catch((err) => setError(err.message))
@@ -2334,6 +2945,34 @@ function MobileReciteRoot({
     setActiveQuizItem(null);
     setView("quiz_list");
     loadQuizList(1);
+  }
+
+  function loadNoteList(page = 1) {
+    setNoteListLoading(true);
+    setError("");
+    return api(`/api/recite/notes?page=${Math.max(page, 1)}&page_size=20`)
+      .then((data) => {
+        setNoteRows(data.items || []);
+        setNoteTotal(Number(data.total) || 0);
+        setNotePage(Math.max(Number(data.page) || page, 1));
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setNoteListLoading(false));
+  }
+
+  function openNoteList() {
+    setView("note_list");
+    loadNoteList(1);
+  }
+
+  function openNoteViewer(noteID) {
+    setNoteViewerVisible(true);
+    setNoteViewerLoading(true);
+    setNoteViewerItem(null);
+    api(`/api/recite/notes/${noteID}`)
+      .then((data) => setNoteViewerItem(data.note || null))
+      .catch((err) => setError(err.message))
+      .finally(() => setNoteViewerLoading(false));
   }
 
   function forgetWord(word) {
@@ -2452,12 +3091,12 @@ function MobileReciteRoot({
       <div className="mobile-page-card">
         <div className="mobile-topbar">
           <button className="mobile-back-btn" onClick={() => setView("home")}>{"< 退出"}</button>
-          <h2 className="mobile-page-title">测试列表</h2>
+          <h2 className="mobile-page-title">测验列表</h2>
           <div />
         </div>
         {error && <div className="error">{error}</div>}
         {quizListLoading && <div className="helper-tip">加载中...</div>}
-        {!quizListLoading && quizRows.length === 0 && <div className="helper-tip">暂无测试记录</div>}
+        {!quizListLoading && quizRows.length === 0 && <div className="helper-tip">暂无测验记录</div>}
         {!quizListLoading && quizRows.map((item) => (
           <div key={item.id} className="mobile-word-item">
             <div className="mobile-word-item-head mobile-word-item-head-finished">
@@ -2470,17 +3109,9 @@ function MobileReciteRoot({
               >
                 {item.status === "进行中" ? `${item.title}（进行中）` : item.title}
               </button>
-              <div className="mobile-word-item-right-meta">
-                <span className="mobile-word-item-no-inline">{item.created_at}</span>
-                <span className={`mobile-word-item-status ${item.status === "进行中" ? "operated" : "wrong"}`}>
-                  {item.status}
-                </span>
-              </div>
             </div>
-            <div className="mobile-word-item-mean">
-              <div className="mobile-word-item-mean-line">
-                共{item.stats.total}个，已测{item.stats.tested}个，正确{item.stats.correct}个，错误{item.stats.wrong}个，忘记{item.stats.forgotten}个
-              </div>
+            <div className="mobile-quiz-list-stats">
+              共{item.stats.total}，正确{item.stats.correct}，错误{item.stats.wrong}，忘记{item.stats.forgotten}
             </div>
           </div>
         ))}
@@ -2495,7 +3126,50 @@ function MobileReciteRoot({
     );
   }
 
+  if (view === "note_list") {
+    const totalPages = Math.max(Math.ceil(noteTotal / 20), 1);
+    return (
+      <div className="mobile-page-card">
+        <div className="mobile-topbar">
+          <button className="mobile-back-btn" onClick={() => setView("home")}>{"< 退出"}</button>
+          <h2 className="mobile-page-title">笔记列表</h2>
+          <div />
+        </div>
+        {error && <div className="error">{error}</div>}
+        {noteListLoading && <div className="helper-tip">加载中...</div>}
+        {!noteListLoading && noteRows.length === 0 && <div className="helper-tip">暂无笔记</div>}
+        {!noteListLoading && noteRows.map((item) => {
+          const wordsText = (item.words || []).join(" / ");
+          const fullTitle = `${item.type} — ${wordsText || "-"}`;
+          return (
+            <div key={item.id} className="mobile-word-item">
+              <div className="mobile-word-item-mean">
+                <button className="mobile-note-link" onClick={() => openNoteViewer(item.id)}>{fullTitle}</button>
+              </div>
+            </div>
+          );
+        })}
+        {!noteListLoading && totalPages > 1 && (
+          <div className="dictation-actions">
+            <button className="btn secondary" disabled={notePage <= 1} onClick={() => loadNoteList(notePage - 1)}>上一页</button>
+            <div>{notePage}/{totalPages}</div>
+            <button className="btn secondary" disabled={notePage >= totalPages} onClick={() => loadNoteList(notePage + 1)}>下一页</button>
+          </div>
+        )}
+        <NoteViewerModal
+          visible={noteViewerVisible}
+          note={noteViewerItem}
+          loading={noteViewerLoading}
+          onClose={() => setNoteViewerVisible(false)}
+        />
+      </div>
+    );
+  }
+
   if (view === "word" && selectedWord) {
+    const selectedWordNotes = (wordNoteMap && selectedWord && selectedWord.word_id)
+      ? (wordNoteMap[selectedWord.word_id] || [])
+      : [];
     return (
       <div className="mobile-page-card">
         <div className="mobile-topbar">
@@ -2513,7 +3187,18 @@ function MobileReciteRoot({
           </a>
         </div>
         <h2 className="mobile-page-title mobile-word-page-title">{selectedWord.word}</h2>
-        <MobileWordDetailBody row={selectedWord} playAudio={playAudio} />
+        <MobileWordDetailBody
+          row={selectedWord}
+          playAudio={playAudio}
+          noteTags={selectedWordNotes}
+          onOpenNote={openNoteViewer}
+        />
+        <NoteViewerModal
+          visible={noteViewerVisible}
+          note={noteViewerItem}
+          loading={noteViewerLoading}
+          onClose={() => setNoteViewerVisible(false)}
+        />
       </div>
     );
   }
@@ -2580,6 +3265,7 @@ function MobileReciteRoot({
             {!loading && words.length === 0 && <div className="helper-tip">暂无单词</div>}
             {words.map((row, idx) => {
               const meaningRows = formatMeaningLines(row.parts);
+              const rowNotes = (wordNoteMap && row && row.word_id) ? (wordNoteMap[row.word_id] || []) : [];
               return (
                 <div key={`${row.word}-${idx}`} className="mobile-word-item">
                   <div className="mobile-word-item-head">
@@ -2625,6 +3311,19 @@ function MobileReciteRoot({
                       <div key={`${row.word}-mean-${lineIdx}`} className="mobile-word-item-mean-line">{line}</div>
                     )) : "-"}
                   </div>
+                  {rowNotes.length > 0 && (
+                    <div className="mobile-note-list">
+                      {rowNotes.map((note) => (
+                        <button
+                          key={`mobile-row-note-${row.word_id}-${note.id}`}
+                          className="mobile-note-link"
+                          onClick={() => openNoteViewer(note.id)}
+                        >
+                          {note.type}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -2658,6 +3357,12 @@ function MobileReciteRoot({
             默写
           </button>
         </nav>
+        <NoteViewerModal
+          visible={noteViewerVisible}
+          note={noteViewerItem}
+          loading={noteViewerLoading}
+          onClose={() => setNoteViewerVisible(false)}
+        />
       </>
     );
   }
@@ -2671,8 +3376,11 @@ function MobileReciteRoot({
         </li>
         <li>
           <button className="mobile-home-item" onClick={openQuizList}>
-            测试列表{quizHasRunning ? "（进行中）" : ""}
+            测验列表{quizHasRunning ? "（进行中）" : ""}
           </button>
+        </li>
+        <li>
+          <button className="mobile-home-item" onClick={openNoteList}>笔记列表</button>
         </li>
         <li>
           <button className="mobile-home-item" onClick={openReview}>今日复习</button>
@@ -2711,6 +3419,7 @@ function SidebarRecite({
   onSelectUnit,
   onSelectForgotten,
   onSelectQuizList,
+  onSelectNoteList,
   onSelectReview,
   quizHasRunning,
   onCreateUnit,
@@ -2865,7 +3574,17 @@ function SidebarRecite({
               className={`unit-item unit-main-btn ${selectedType === "quiz_list" ? "active" : ""}`}
               onClick={onSelectQuizList}
             >
-              测试列表{quizHasRunning ? "（进行中）" : ""}
+              测验列表{quizHasRunning ? "（进行中）" : ""}
+            </button>
+          </div>
+        </li>
+        <li className="unit-row-wrap">
+          <div className="unit-item-row">
+            <button
+              className={`unit-item unit-main-btn ${selectedType === "note_list" ? "active" : ""}`}
+              onClick={onSelectNoteList}
+            >
+              笔记列表
             </button>
           </div>
         </li>
@@ -3000,6 +3719,7 @@ function App() {
   const [toast, setToast] = useState({ visible: false, text: "", ts: 0 });
   const [showMobileRootNav, setShowMobileRootNav] = useState(true);
   const [defaultAccent, setDefaultAccent] = useState("en");
+  const [noteTypes, setNoteTypes] = useState(["近义词", "反义词", "关联词跟"]);
   const [reviewDates, setReviewDates] = useState([]);
   const [selectedReviewDate, setSelectedReviewDate] = useState("");
   const [quizHasRunning, setQuizHasRunning] = useState(false);
@@ -3085,11 +3805,16 @@ function App() {
   useEffect(() => {
     api("/api/recite/config")
       .then((data) => {
-        const accent = data && data.config && data.config.default_accent === "am" ? "am" : "en";
+        const config = (data && data.config) || {};
+        const accent = config.default_accent === "am" ? "am" : "en";
         setDefaultAccent(accent);
+        if (Array.isArray(config.note_types) && config.note_types.length > 0) {
+          setNoteTypes(config.note_types);
+        }
       })
       .catch(() => {
         setDefaultAccent("en");
+        setNoteTypes(["近义词", "反义词", "关联词跟"]);
       });
   }, []);
 
@@ -3254,6 +3979,7 @@ function App() {
               }}
               onSelectForgotten={() => setSelectedReciteType("forgotten")}
               onSelectQuizList={() => setSelectedReciteType("quiz_list")}
+              onSelectNoteList={() => setSelectedReciteType("note_list")}
               onSelectReview={() => setSelectedReciteType("review")}
               quizHasRunning={quizHasRunning}
               onCreateUnit={createUnit}
@@ -3293,11 +4019,15 @@ function App() {
           {mode === "todo" && <TodoPanel />}
 
           {mode === "recite" && selectedReciteType === "forgotten" && (
-            <ForgottenPanel notify={notify} defaultAccent={defaultAccent} onQuizStateChange={loadQuizRunning} />
+            <ForgottenPanel notify={notify} defaultAccent={defaultAccent} onQuizStateChange={loadQuizRunning} noteTypes={noteTypes} />
           )}
 
           {mode === "recite" && selectedReciteType === "quiz_list" && (
             <QuizListPanel notify={notify} defaultAccent={defaultAccent} onQuizStateChange={loadQuizRunning} />
+          )}
+
+          {mode === "recite" && selectedReciteType === "note_list" && (
+            <NoteListPanel />
           )}
 
           {mode === "recite" && selectedReciteType === "review" && (
@@ -3308,6 +4038,7 @@ function App() {
               selectedReviewDate={selectedReviewDate}
               onReviewDateChange={setSelectedReviewDate}
               onQuizStateChange={loadQuizRunning}
+              noteTypes={noteTypes}
             />
           )}
 
@@ -3325,6 +4056,7 @@ function App() {
               notify={notify}
               defaultAccent={defaultAccent}
               onQuizStateChange={loadQuizRunning}
+              noteTypes={noteTypes}
             />
           )}
         </main>

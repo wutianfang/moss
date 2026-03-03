@@ -409,12 +409,171 @@ a:hover {
   color: #0f172a;
 }
 
+.note-modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 2100;
+  background: rgba(15, 23, 42, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.note-modal-card {
+  width: min(860px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  background: #fff;
+  border: 2px solid #1f2937;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.note-modal-card.view {
+  width: min(640px, calc(100vw - 40px));
+}
+
+.note-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.note-modal-header h3 {
+  margin: 0;
+}
+
+.note-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.note-form-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.note-form-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.note-search-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.note-search-result {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8fafc;
+}
+
+.note-related-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.note-related-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #f8fafc;
+  padding: 4px 10px;
+}
+
+.note-related-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.note-remove-btn {
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+}
+
+.note-type-list {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.note-type-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.note-textarea {
+  width: 100%;
+  min-height: 160px;
+  resize: vertical;
+}
+
+.note-submit-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.note-view-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.note-view-line {
+  color: #334155;
+}
+
+.note-content-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8fafc;
+}
+
+.note-title-inline-btn {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
 .yinbiao-inline {
   display: flex;
   align-items: center;
   gap: 4px;
   flex-wrap: wrap;
   color: #334155;
+}
+
+.desc-note-inline-tools {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .yinbiao-gap {
@@ -835,6 +994,40 @@ a:hover {
   display: block;
 }
 
+.mobile-note-section {
+  margin-top: 12px;
+}
+
+.mobile-note-title {
+  font-size: inherit;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.mobile-note-list {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mobile-word-item .mobile-note-list {
+  margin-top: 4px;
+  font-size: 24px;
+  line-height: 1.45;
+}
+
+.mobile-note-link {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  color: inherit;
+  font-size: inherit;
+  text-align: left;
+}
+
 .mobile-quiz-page {
   display: flex;
   flex-direction: column;
@@ -1000,6 +1193,14 @@ a:hover {
 
 .mobile-quiz-finished-item {
   padding-right: 0;
+}
+
+.mobile-quiz-list-stats {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #94a3b8;
+  text-align: right;
+  line-height: 1.35;
 }
 
 .mobile-word-item-head-finished {

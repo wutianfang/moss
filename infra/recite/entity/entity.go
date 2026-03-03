@@ -76,3 +76,18 @@ type QuizWord struct {
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
+
+type Note struct {
+	ID        int64     `json:"id"`
+	NoteType  string    `json:"note_type"`
+	Content   string    `json:"content"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type NoteWordRelation struct {
+	ID        int64     `json:"id"`
+	NoteID    int64     `json:"note_id"`
+	WordID    int64     `json:"word_id"`
+	CreatedAt time.Time `json:"created_at"`
+}

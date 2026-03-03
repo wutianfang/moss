@@ -10,6 +10,7 @@ storage:
 recite:
   default_accent: "en"
   review_intervals_days: [1, 2, 4, 7, 15, 30]
+  note_types: ["近义词", "反义词", "关联词跟"]
 log:
   dir: "log"
   enable_request_log: false

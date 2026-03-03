@@ -32,8 +32,9 @@ type ConfigStorage struct {
 }
 
 type ConfigRecite struct {
-	DefaultAccent       string `yaml:"default_accent"`
-	ReviewIntervalsDays []int  `yaml:"review_intervals_days"`
+	DefaultAccent       string   `yaml:"default_accent"`
+	ReviewIntervalsDays []int    `yaml:"review_intervals_days"`
+	NoteTypes           []string `yaml:"note_types"`
 }
 
 type ConfigLog struct {
@@ -65,6 +66,7 @@ func defaultConfig() *Config {
 	cfg.Storage.WordMP3Dir = "store/word_mp3"
 	cfg.Recite.DefaultAccent = "en"
 	cfg.Recite.ReviewIntervalsDays = []int{1, 2, 4, 7, 15, 30}
+	cfg.Recite.NoteTypes = []string{"近义词", "反义词", "关联词跟"}
 	cfg.Log.Dir = "log"
 	cfg.Log.EnableRequestLog = false
 	return cfg
@@ -88,6 +90,7 @@ func fillDefault(cfg *Config) {
 	}
 	cfg.Recite.DefaultAccent = normalizeAccent(cfg.Recite.DefaultAccent)
 	cfg.Recite.ReviewIntervalsDays = normalizeReviewIntervals(cfg.Recite.ReviewIntervalsDays)
+	cfg.Recite.NoteTypes = normalizeNoteTypes(cfg.Recite.NoteTypes)
 	if cfg.Log.Dir == "" {
 		cfg.Log.Dir = "log"
 	}
@@ -122,6 +125,29 @@ func normalizeReviewIntervals(raw []int) []int {
 	}
 	if len(ret) == 0 {
 		return []int{1, 2, 4, 7, 15, 30}
+	}
+	return ret
+}
+
+func normalizeNoteTypes(raw []string) []string {
+	if len(raw) == 0 {
+		return []string{"近义词", "反义词", "关联词跟"}
+	}
+	seen := make(map[string]struct{}, len(raw))
+	ret := make([]string, 0, len(raw))
+	for _, item := range raw {
+		text := strings.TrimSpace(item)
+		if text == "" {
+			continue
+		}
+		if _, ok := seen[text]; ok {
+			continue
+		}
+		seen[text] = struct{}{}
+		ret = append(ret, text)
+	}
+	if len(ret) == 0 {
+		return []string{"近义词", "反义词", "关联词跟"}
 	}
 	return ret
 }

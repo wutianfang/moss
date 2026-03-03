@@ -44,9 +44,11 @@ type Service struct {
 	unitWordRepo    *repository.UnitWordRepository
 	forgottenRepo   *repository.ForgottenWordRepository
 	quizRepo        *repository.QuizRepository
+	noteRepo        *repository.NoteRepository
 	wordFetcher     fetcher.WordFetcher
 	defaultAccent   string
 	reviewIntervals []int
+	noteTypes       []string
 }
 
 func NewService(
@@ -55,9 +57,11 @@ func NewService(
 	unitWordRepo *repository.UnitWordRepository,
 	forgottenRepo *repository.ForgottenWordRepository,
 	quizRepo *repository.QuizRepository,
+	noteRepo *repository.NoteRepository,
 	wordFetcher fetcher.WordFetcher,
 	defaultAccent string,
 	reviewIntervals []int,
+	noteTypes []string,
 ) *Service {
 	return &Service{
 		wordRepo:        wordRepo,
@@ -65,9 +69,11 @@ func NewService(
 		unitWordRepo:    unitWordRepo,
 		forgottenRepo:   forgottenRepo,
 		quizRepo:        quizRepo,
+		noteRepo:        noteRepo,
 		wordFetcher:     wordFetcher,
 		defaultAccent:   normalizeAccent(defaultAccent),
 		reviewIntervals: normalizeReviewIntervals(reviewIntervals),
+		noteTypes:       normalizeNoteTypes(noteTypes),
 	}
 }
 
@@ -75,6 +81,7 @@ func (s *Service) GetClientConfig() ClientConfig {
 	return ClientConfig{
 		DefaultAccent:       normalizeAccent(s.defaultAccent),
 		ReviewIntervalsDays: append([]int{}, s.reviewIntervals...),
+		NoteTypes:           append([]string{}, s.noteTypes...),
 	}
 }
 
@@ -683,6 +690,184 @@ func (s *Service) HasRunningQuiz(ctx context.Context) (bool, error) {
 	return s.quizRepo.HasRunning(ctx)
 }
 
+func (s *Service) CreateNote(ctx context.Context, noteType, content string, wordIDs []int64) (*NoteDetail, error) {
+	if s.noteRepo == nil {
+		return nil, NewBizError(1, "笔记仓储未初始化")
+	}
+	normalizedType, err := s.normalizeNoteTypeChoice(noteType)
+	if err != nil {
+		return nil, err
+	}
+	normalizedContent := strings.TrimSpace(content)
+	if normalizedContent == "" {
+		return nil, NewBizError(1001, "笔记内容不能为空")
+	}
+	normalizedWordIDs, err := s.normalizeWordIDs(ctx, wordIDs)
+	if err != nil {
+		return nil, err
+	}
+	created, err := s.noteRepo.Create(ctx, normalizedType, normalizedContent, normalizedWordIDs)
+	if err != nil {
+		return nil, err
+	}
+	return s.GetNoteDetail(ctx, created.ID)
+}
+
+func (s *Service) UpdateNote(ctx context.Context, noteID int64, noteType, content string, wordIDs []int64) (*NoteDetail, error) {
+	if s.noteRepo == nil {
+		return nil, NewBizError(1, "笔记仓储未初始化")
+	}
+	if noteID <= 0 {
+		return nil, NewBizError(1001, "note_id 非法")
+	}
+	exist, err := s.noteRepo.GetByID(ctx, noteID)
+	if err != nil {
+		return nil, err
+	}
+	if exist == nil {
+		return nil, NewBizError(1002, "笔记不存在")
+	}
+
+	normalizedType, err := s.normalizeNoteTypeChoice(noteType)
+	if err != nil {
+		return nil, err
+	}
+	normalizedContent := strings.TrimSpace(content)
+	if normalizedContent == "" {
+		return nil, NewBizError(1001, "笔记内容不能为空")
+	}
+	normalizedWordIDs, err := s.normalizeWordIDs(ctx, wordIDs)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.noteRepo.Update(ctx, noteID, normalizedType, normalizedContent, normalizedWordIDs); err != nil {
+		return nil, err
+	}
+	return s.GetNoteDetail(ctx, noteID)
+}
+
+func (s *Service) GetNoteDetail(ctx context.Context, noteID int64) (*NoteDetail, error) {
+	if s.noteRepo == nil {
+		return nil, NewBizError(1, "笔记仓储未初始化")
+	}
+	if noteID <= 0 {
+		return nil, NewBizError(1001, "note_id 非法")
+	}
+	note, err := s.noteRepo.GetByID(ctx, noteID)
+	if err != nil {
+		return nil, err
+	}
+	if note == nil {
+		return nil, NewBizError(1002, "笔记不存在")
+	}
+	relations, err := s.noteRepo.ListWordRelationsByNoteID(ctx, noteID)
+	if err != nil {
+		return nil, err
+	}
+	wordIDs := make([]int64, 0, len(relations))
+	for _, rel := range relations {
+		wordIDs = append(wordIDs, rel.WordID)
+	}
+	words, err := s.buildUnitWordItemsByWordIDs(ctx, wordIDs)
+	if err != nil {
+		return nil, err
+	}
+	return &NoteDetail{
+		ID:        note.ID,
+		Type:      note.NoteType,
+		Content:   note.Content,
+		CreatedAt: note.CreatedAt.Format(datetimeLayout),
+		UpdatedAt: note.UpdatedAt.Format(datetimeLayout),
+		Words:     words,
+	}, nil
+}
+
+func (s *Service) ListNotes(ctx context.Context, page, pageSize int) ([]NoteListItem, int64, error) {
+	if s.noteRepo == nil {
+		return nil, 0, NewBizError(1, "笔记仓储未初始化")
+	}
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+	offset := (page - 1) * pageSize
+	rows, total, err := s.noteRepo.List(ctx, pageSize, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	noteIDs := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		noteIDs = append(noteIDs, row.Note.ID)
+	}
+	relations, err := s.noteRepo.ListWordRelationsByNoteIDs(ctx, noteIDs)
+	if err != nil {
+		return nil, 0, err
+	}
+	wordIDs := make([]int64, 0, len(relations))
+	for _, rel := range relations {
+		wordIDs = append(wordIDs, rel.WordID)
+	}
+	wordMap, err := s.wordRepo.GetByIDs(ctx, wordIDs)
+	if err != nil {
+		return nil, 0, err
+	}
+	wordTextsByNote := make(map[int64][]string, len(rows))
+	for _, rel := range relations {
+		word := wordMap[rel.WordID]
+		if word == nil {
+			continue
+		}
+		wordTextsByNote[rel.NoteID] = append(wordTextsByNote[rel.NoteID], word.Word)
+	}
+
+	ret := make([]NoteListItem, 0, len(rows))
+	for _, row := range rows {
+		ret = append(ret, NoteListItem{
+			ID:        row.Note.ID,
+			Type:      row.Note.NoteType,
+			Content:   row.Note.Content,
+			Words:     wordTextsByNote[row.Note.ID],
+			CreatedAt: row.Note.CreatedAt.Format(datetimeLayout),
+		})
+	}
+	return ret, total, nil
+}
+
+func (s *Service) ListNotesByWordIDs(ctx context.Context, wordIDs []int64) (map[int64][]NoteTag, error) {
+	if s.noteRepo == nil {
+		return nil, NewBizError(1, "笔记仓储未初始化")
+	}
+	normalizedWordIDs, err := s.normalizeWordIDsFast(wordIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(normalizedWordIDs) == 0 {
+		return map[int64][]NoteTag{}, nil
+	}
+	rows, err := s.noteRepo.ListByWordIDs(ctx, normalizedWordIDs)
+	if err != nil {
+		return nil, err
+	}
+	ret := make(map[int64][]NoteTag, len(rows))
+	for wordID, notes := range rows {
+		items := make([]NoteTag, 0, len(notes))
+		for _, note := range notes {
+			items = append(items, NoteTag{
+				ID:   note.ID,
+				Type: note.NoteType,
+			})
+		}
+		ret[wordID] = items
+	}
+	return ret, nil
+}
+
 func (s *Service) listQuizSourceWords(
 	ctx context.Context,
 	sourceKind string,
@@ -763,6 +948,81 @@ func normalizeQuizResult(raw string) (string, error) {
 	}
 }
 
+func normalizeNoteTypes(raw []string) []string {
+	if len(raw) == 0 {
+		return []string{"近义词", "反义词", "关联词跟"}
+	}
+	seen := make(map[string]struct{}, len(raw))
+	ret := make([]string, 0, len(raw))
+	for _, item := range raw {
+		text := strings.TrimSpace(item)
+		if text == "" {
+			continue
+		}
+		if _, ok := seen[text]; ok {
+			continue
+		}
+		seen[text] = struct{}{}
+		ret = append(ret, text)
+	}
+	if len(ret) == 0 {
+		return []string{"近义词", "反义词", "关联词跟"}
+	}
+	return ret
+}
+
+func (s *Service) normalizeNoteTypeChoice(raw string) (string, error) {
+	text := strings.TrimSpace(raw)
+	for _, item := range s.noteTypes {
+		if text == item {
+			return text, nil
+		}
+	}
+	return "", NewBizError(1001, "笔记类型非法")
+}
+
+func (s *Service) normalizeWordIDs(ctx context.Context, wordIDs []int64) ([]int64, error) {
+	if len(wordIDs) == 0 {
+		return nil, NewBizError(1001, "关联单词不能为空")
+	}
+	seen := make(map[int64]struct{}, len(wordIDs))
+	ret := make([]int64, 0, len(wordIDs))
+	for _, id := range wordIDs {
+		if id <= 0 {
+			return nil, NewBizError(1001, "word_id 非法")
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ret = append(ret, id)
+	}
+	wordMap, err := s.wordRepo.GetByIDs(ctx, ret)
+	if err != nil {
+		return nil, err
+	}
+	if len(wordMap) != len(ret) {
+		return nil, NewBizError(1002, "存在无效关联单词")
+	}
+	return ret, nil
+}
+
+func (s *Service) normalizeWordIDsFast(wordIDs []int64) ([]int64, error) {
+	seen := make(map[int64]struct{}, len(wordIDs))
+	ret := make([]int64, 0, len(wordIDs))
+	for _, id := range wordIDs {
+		if id <= 0 {
+			return nil, NewBizError(1001, "word_id 非法")
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ret = append(ret, id)
+	}
+	return ret, nil
+}
+
 func normalizeWord(rawWord string) (string, error) {
 	word := strings.ToLower(strings.TrimSpace(rawWord))
 	if word == "" {
@@ -835,6 +1095,25 @@ func (s *Service) buildUnitWordItemsFromRelations(ctx context.Context, relations
 	ret := make([]UnitWordItem, 0, len(relations))
 	for _, relation := range relations {
 		word := wordMap[relation.WordID]
+		if word == nil {
+			continue
+		}
+		ret = append(ret, buildUnitWordItem(word, len(ret)+1))
+	}
+	return ret, nil
+}
+
+func (s *Service) buildUnitWordItemsByWordIDs(ctx context.Context, wordIDs []int64) ([]UnitWordItem, error) {
+	if len(wordIDs) == 0 {
+		return []UnitWordItem{}, nil
+	}
+	wordMap, err := s.wordRepo.GetByIDs(ctx, wordIDs)
+	if err != nil {
+		return nil, err
+	}
+	ret := make([]UnitWordItem, 0, len(wordIDs))
+	for _, wordID := range wordIDs {
+		word := wordMap[wordID]
 		if word == nil {
 			continue
 		}

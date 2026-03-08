@@ -1042,7 +1042,8 @@ function DictationPanel({
       return;
     }
     const row = words[index];
-    onOperation(row.word)
+    const answerWord = (row.word || "").trim();
+    onOperation(answerWord)
       .then(() => {
         return api(`/api/recite/quizzes/${quiz.id}/words/${row.seq}/submit`, {
           method: "POST",
@@ -1074,9 +1075,10 @@ function DictationPanel({
     if (!onOperation) {
       return;
     }
-    onOperation(word)
+    const row = targetRow || words.find((item) => item.word === word);
+    const answerWord = ((row && row.word) || word || "").trim();
+    onOperation(answerWord)
       .then(() => {
-        const row = targetRow || words.find((item) => item.word === word);
         if (!row || !quiz || !quiz.id) {
           return;
         }
@@ -2304,6 +2306,12 @@ function MobileQuizPanel({
       return;
     }
     if (revealed) {
+      const hasNextPending = findNextPendingIndex(words, wordStatusMap, index) >= 0;
+      if (!hasNextPending) {
+        setFinished(true);
+        finishQuizIfNeeded(true);
+        return;
+      }
       goNext();
       return;
     }
@@ -2338,7 +2346,8 @@ function MobileQuizPanel({
       return;
     }
     const shouldCountAsOperate = !revealed;
-    onOperation(current.word)
+    const answerWord = (current.word || "").trim();
+    onOperation(answerWord)
       .then(() => {
         return api(`/api/recite/quizzes/${quiz.id}/words/${current.seq}/submit`, {
           method: "POST",
@@ -2363,7 +2372,7 @@ function MobileQuizPanel({
   }
 
   useEffect(() => {
-    if (readOnly || loading || !quiz || quiz.status === "已完结") {
+    if (finished || readOnly || loading || !quiz || quiz.status === "已完结") {
       return;
     }
     const allDone = words.length > 0 && words.every((row) => {
@@ -2373,9 +2382,14 @@ function MobileQuizPanel({
     if (!allDone) {
       return;
     }
+    const currentKey = rowKey(current);
+    const currentDone = currentKey > 0 && (wordStatusMap[currentKey] || "未测试") === "已测试";
+    if (revealed && current && currentDone) {
+      return;
+    }
     setFinished(true);
     finishQuizIfNeeded();
-  }, [readOnly, loading, quiz && quiz.status, words, wordStatusMap]);
+  }, [finished, readOnly, loading, quiz && quiz.status, words, wordStatusMap, current, revealed]);
 
   if (loading) {
     return (
@@ -2481,6 +2495,9 @@ function MobileQuizPanel({
     );
   }
 
+  const hasNextPending = findNextPendingIndex(words, wordStatusMap, index) >= 0;
+  const primaryActionText = revealed ? (hasNextPending ? "下一个" : "结束") : "确认";
+
   return (
     <div className="mobile-page-card mobile-quiz-page">
       <div className="mobile-topbar">
@@ -2533,7 +2550,7 @@ function MobileQuizPanel({
 
         <div className="mobile-quiz-actions">
           <button className="btn secondary" onClick={submitOrNext} disabled={readOnly}>
-            {revealed ? "下一个" : "确认"}
+            {primaryActionText}
           </button>
           <button className="btn secondary" onClick={handleOperation} disabled={readOnly}>
             {operationLabel}
